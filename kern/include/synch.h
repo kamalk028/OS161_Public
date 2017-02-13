@@ -74,7 +74,12 @@ void V(struct semaphore *);
  */
 struct lock {
         char *lk_name;
-        HANGMAN_LOCKABLE(lk_hangman);   /* Deadlock detector hook. */
+	struct wchan *lock_wchan;
+	struct spinlock lock_splk; //lock_spinlock 
+	// Object to track thread which currently holds the lock.
+	// Can change lock_data to boolean later if mem usage is too high or something.
+	volatile unsigned lock_data;
+	struct thread *lock_thread;
         // add what you need here
         // (don't forget to mark things volatile as needed)
 };
@@ -97,7 +102,6 @@ void lock_acquire(struct lock *);
 void lock_release(struct lock *);
 bool lock_do_i_hold(struct lock *);
 
-
 /*
  * Condition variable.
  *
@@ -114,6 +118,8 @@ bool lock_do_i_hold(struct lock *);
 
 struct cv {
         char *cv_name;
+	struct spinlock cv_splk;
+	struct wchan *cv_wchan;
         // add what you need here
         // (don't forget to mark things volatile as needed)
 };
