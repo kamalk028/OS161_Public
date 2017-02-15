@@ -157,7 +157,7 @@ bool cv_isempty(struct cv *cv, struct lock *lock);
  */
 
 struct rwlock {
-        char *rwlock_name;
+        char *rwlk_name;
 	struct wchan *rwlock_write_wchan;
 	struct wchan *rwlock_read_wchan;
 	struct spinlock rwlock_splk; //lock_spinlock 

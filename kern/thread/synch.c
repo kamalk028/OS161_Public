@@ -396,7 +396,7 @@ rwlock_create(const char *name)
 		return NULL;
 	}
 
-	rwlock->lk_name = kstrdup(name);
+	rwlock->rwlk_name = kstrdup(name);
 	if (rwlock->rwlk_name == NULL) {
 		kfree(rwlock);
 		return NULL;
@@ -436,14 +436,14 @@ rwlock_create(const char *name)
 void
 rwlock_destroy(struct rwlock *rwlock)
 {
-	KASSERT(rwlock->rwlock_thread==NULL);
+	//KASSERT(rwlock->rwlock_thread==NULL);
 	// add stuff here as needed : Have added some stuff
 
 	//kfree();
 	//rwlock->rwlock_thread = NULL;
-	spinlock_cleanup(&lock->lock_splk);
-	wchan_destroy(rwlock->rwlock_wirte_wchan);
-	wchan_destriy(rwlock->rwlock_read_wchan);
+	spinlock_cleanup(&rwlock->rwlock_splk);
+	wchan_destroy(rwlock->rwlock_write_wchan);
+	wchan_destroy(rwlock->rwlock_read_wchan);
 	kfree(rwlock->rwlk_name);
 	kfree(rwlock);
 	KASSERT(rwlock != NULL);
@@ -455,7 +455,7 @@ rwlock_acquire_read(struct rwlock *rwlock)
 	KASSERT(rwlock != NULL);
 	KASSERT(curthread->t_in_interrupt == false);
 	
-	spinlock_acquire(&lock->lock_splk);
+	spinlock_acquire(&rwlock->rwlock_splk);
 
 	while(rwlock->rwlock_data == -1)
 	{
@@ -471,7 +471,7 @@ rwlock_acquire_read(struct rwlock *rwlock)
 }
 
 void
-rwwlock_release_read(struct rwlock *rwlock)
+rwlock_release_read(struct rwlock *rwlock)
 {
 	KASSERT(rwlock != NULL);
 	//KASSERT(rwlock_do_i_hold(lock));
@@ -497,7 +497,7 @@ rwlock_acquire_write(struct rwlock *rwlock)
 	KASSERT(rwlock != NULL);
 	KASSERT(curthread->t_in_interrupt == false);
 	
-	spinlock_acquire(&lock->lock_splk);
+	spinlock_acquire(&rwlock->rwlock_splk);
 
 	while(rwlock->rwlock_data != 0)
 	{
@@ -513,7 +513,7 @@ rwlock_acquire_write(struct rwlock *rwlock)
 }
 
 void
-rwlock_release_write(struct lock *lock)
+rwlock_release_write(struct rwlock *rwlock)
 {
 	KASSERT(rwlock != NULL);
 	//KASSERT(rwlock_do_i_hold(lock));
