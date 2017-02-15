@@ -76,9 +76,9 @@ struct lock {
         char *lk_name;
 	struct wchan *lock_wchan;
 	struct spinlock lock_splk; //lock_spinlock 
-	// Object to track thread which currently holds the lock.
 	// Can change lock_data to boolean later if mem usage is too high or something.
 	volatile unsigned lock_data;
+	// Object to track thread which currently holds the lock.
 	struct thread *lock_thread;
         // add what you need here
         // (don't forget to mark things volatile as needed)
@@ -143,6 +143,8 @@ void cv_destroy(struct cv *);
 void cv_wait(struct cv *cv, struct lock *lock);
 void cv_signal(struct cv *cv, struct lock *lock);
 void cv_broadcast(struct cv *cv, struct lock *lock);
+//Added on for convenience in synchprob.
+bool cv_isempty(struct cv *cv, struct lock *lock);
 
 /*
  * Reader-writer locks.
@@ -156,6 +158,12 @@ void cv_broadcast(struct cv *cv, struct lock *lock);
 
 struct rwlock {
         char *rwlock_name;
+	struct wchan *rwlock_write_wchan;
+	struct wchan *rwlock_read_wchan;
+	struct spinlock rwlock_splk; //lock_spinlock 
+	// Object to track which kinds of thread are holding the lock.
+	volatile signed rwlock_data;
+	//struct thread *rwlock_thread;
         // add what you need here
         // (don't forget to mark things volatile as needed)
 };
