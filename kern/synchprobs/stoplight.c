@@ -70,11 +70,69 @@
 #include <synch.h>
 
 /*
+   static variable declaration
+   to be used in solving intersection problem
+*/
+
+static struct lock *quad_lock[4];
+static struct cv *cv;
+static struct lock *cv_lock;
+static struct spinlock spinlock;
+static volatile int car_in_quad[4];
+
+
+
+
+/*
  * Called by the driver during initialization.
  */
 
+void destroy_quadlocks()
+{
+	int i;
+	for(i=3; i<=0; i--)
+	{
+		lock_destroy(quad_lock[i]);
+	}
+}
+
 void
 stoplight_init() {
+	int i;
+	for(i=0; i<4; i++)
+	{
+		quad_lock[i] = lock_create("quadrant lock");
+		if(quad_lock == NULL)
+		{
+			int j = i;
+			i=i-1;
+			while(i<=0)
+			{
+				lock_destroy(quad_lock[i]);
+				i--;	
+			}
+			panic("lock_create returned NULL, while creating lock for quadrant number: %d\n", j);
+			return;
+		}
+	}
+	cv = cv_create("Stoplight cv");
+	if(cv == NULL)
+	{
+		destroy_quadlocks();
+		panic("cv_create returned NULL\n");
+	}
+	cv_lock = lock_create("cv_lock");
+	if(cv_lock == NULL)
+	{
+		destroy_quadlocks();
+		cv_destroy(cv);
+		panic("lock_create returned NULL while creating cv_lock\n");
+	}
+	spinlock_init(&spinlock);
+	for(i=0; i<4; i++)
+	{
+		car_in_quad[i] = -1;
+	}
 	return;
 }
 
@@ -83,14 +141,63 @@ stoplight_init() {
  */
 
 void stoplight_cleanup() {
+	destroy_quadlocks();
+	cv_destroy(cv);
+	lock_destroy(cv_lock);
+	spinlock_cleanup(&spinlock);
 	return;
 }
 
 void
 turnright(uint32_t direction, uint32_t index)
 {
-	(void)direction;
-	(void)index;
+	/*
+	 * The car will enter only one quadrant.
+	 * The quadrant number will be the same as the direction.
+	 */
+
+	KASSERT(direction<=3);
+	int q = direction;
+	int idx = index;
+	while(1)
+	{
+		spinlock_acquire(&spinlock);
+		if(car_in_quad[q] < 0)
+		{
+			lock_acquire(quad_lock[q]);
+			KASSERT(lock_do_i_hold(quad_lock[q]));
+			car_in_quad[q] = idx;
+			spinlock_release(&spinlock);
+			
+			inQuadrant(q,index);
+			leaveIntersection(index);
+			
+			KASSERT(car_in_quad[q] == idx);
+			
+			spinlock_acquire(&spinlock);
+			car_in_quad[q] = -1;
+			lock_release(quad_lock[q]);
+			spinlock_release(&spinlock);
+			
+			break;
+		}
+		else
+		{
+			spinlock_release(&spinlock);
+			lock_acquire(cv_lock);
+			cv_wait(cv, cv_lock);
+			lock_release(cv_lock);
+		}
+	}
+	lock_acquire(cv_lock);
+	cv_broadcast(cv, cv_lock);
+	lock_release(cv_lock);
+
+
+
+
+	//(void)direction;
+	//(void)index;
 	/*
 	 * Implement this function.
 	 */
@@ -99,8 +206,68 @@ turnright(uint32_t direction, uint32_t index)
 void
 gostraight(uint32_t direction, uint32_t index)
 {
-	(void)direction;
-	(void)index;
+	
+	/*
+	 * The car will enter two quadrants.
+	 * First quadrant will be same as direction. q=direction
+	 * Second quadrant will be ((direction+3)%4). q1= ((direction+3)%4) 
+	 */
+
+	KASSERT(direction<=3);
+	int q = direction;
+	int q1 = ((q+3)%4);
+	int idx = index;
+
+	while(1)
+	{
+		spinlock_acquire(&spinlock);
+		if(car_in_quad[q] < 0 && car_in_quad[q1] < 0)
+		{
+			lock_acquire(quad_lock[q]);
+			lock_acquire(quad_lock[q1]);
+			KASSERT(lock_do_i_hold(quad_lock[q]));
+			KASSERT(lock_do_i_hold(quad_lock[q1]));
+			car_in_quad[q] = idx;
+			car_in_quad[q1] = idx;
+			spinlock_release(&spinlock);
+			
+			
+			inQuadrant(q,index);
+			inQuadrant(q1,index);
+			leaveIntersection(index);
+			
+			
+			KASSERT(car_in_quad[q]==idx);
+			KASSERT(car_in_quad[q1]==idx);
+			
+			
+			spinlock_acquire(&spinlock);
+			car_in_quad[q] = -1;
+			car_in_quad[q1] = -1;
+			lock_release(quad_lock[q]);
+			lock_release(quad_lock[q1]);
+			spinlock_release(&spinlock);
+
+			break;
+
+		}
+		else
+		{
+			spinlock_release(&spinlock);
+			lock_acquire(cv_lock);
+			cv_wait(cv, cv_lock);
+			lock_release(cv_lock);
+		}
+		
+	}
+
+	lock_acquire(cv_lock);                                                                
+	cv_broadcast(cv, cv_lock);                                                            
+	lock_release(cv_lock); 
+	
+	
+	//(void)direction;
+	//(void)index;
 	/*
 	 * Implement this function.
 	 */
@@ -109,8 +276,73 @@ gostraight(uint32_t direction, uint32_t index)
 void
 turnleft(uint32_t direction, uint32_t index)
 {
-	(void)direction;
-	(void)index;
+
+	/*
+	 * The car will enter three quadrants, so these 3 quad_locks must be free
+	 * First quadrant is same as the direction. q = direction
+	 * Second quadrant is (direction+3)%4. q1 = (direction+3)%4;
+	 * Third quadrant will be calculated from the second quadrant. It will be (q1+3)%4. q2 = (q1+3)%4
+	 */
+
+	KASSERT(direction <= 3);
+	int q = direction;
+	int q1 = (q+3)%4;
+	int q2 = (q1+3)%4;
+	int idx = index;
+
+
+	while(1)
+	{
+	spinlock_acquire(&spinlock);
+	if(car_in_quad[q] < 0 && car_in_quad[q1] < 0 && car_in_quad[q2] < 0)
+	{
+		lock_acquire(quad_lock[q]);
+		lock_acquire(quad_lock[q1]);
+		lock_acquire(quad_lock[q2]);
+		KASSERT(lock_do_i_hold(quad_lock[q]));
+		KASSERT(lock_do_i_hold(quad_lock[q1]));
+		KASSERT(lock_do_i_hold(quad_lock[q2]));
+		car_in_quad[q] = idx;
+		car_in_quad[q1] = idx;
+		car_in_quad[q2] = idx;
+		spinlock_release(&spinlock);
+
+
+		inQuadrant(q,index);
+		inQuadrant(q1,index);
+		inQuadrant(q2,index);
+		leaveIntersection(index);
+
+		KASSERT(car_in_quad[q]==idx && car_in_quad[q1]==idx && car_in_quad[q2]==idx);
+
+		spinlock_acquire(&spinlock);
+		car_in_quad[q] = -1;
+		car_in_quad[q1] = -1;
+		car_in_quad[q2] = -1;
+		lock_release(quad_lock[q]);
+		lock_release(quad_lock[q1]);
+		lock_release(quad_lock[q2]);
+		spinlock_release(&spinlock);
+
+		break;
+
+	}
+	else
+	{
+		spinlock_release(&spinlock);
+		lock_acquire(cv_lock);
+		cv_wait(cv, cv_lock);
+		lock_release(cv_lock);
+	}
+	}
+
+	lock_acquire(cv_lock);
+	cv_broadcast(cv, cv_lock);
+	lock_release(cv_lock);
+
+
+//	(void)direction;
+//	(void)index;
 	/*
 	 * Implement this function.
 	 */

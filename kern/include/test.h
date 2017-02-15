@@ -166,6 +166,7 @@ void turnleft(uint32_t, uint32_t);
 void turnright(uint32_t, uint32_t);
 void stoplight_init(void);
 void stoplight_cleanup(void);
+void destroy_quadlocks(void); 
 
 #endif
 
