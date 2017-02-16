@@ -176,16 +176,17 @@ lock_create(const char *name)
 void
 lock_destroy(struct lock *lock)
 {
+	KASSERT(lock != NULL);
 	KASSERT(lock->lock_thread==NULL);
 	// add stuff here as needed : Have added some stuff
 
 	//kfree();
-	lock->lock_thread = NULL;
+	//lock->lock_thread = NULL;
 	spinlock_cleanup(&lock->lock_splk);
 	wchan_destroy(lock->lock_wchan);
 	kfree(lock->lk_name);
 	kfree(lock);
-	KASSERT(lock != NULL);
+
 }
 
 void
@@ -257,9 +258,8 @@ lock_do_i_hold(struct lock *lock)
 	{
 		return false;
 	}
-	//(void)lock;  // suppress warning until code gets written
 
-	//return true; // dummy until code gets written
+
 }
 
 ////////////////////////////////////////////////////////////
@@ -391,3 +391,135 @@ cv_isempty(struct cv *cv, struct lock *lock)
 	spinlock_release(&cv->cv_splk);
 	return ret;
 }
+
+struct rwlock * rwlock_create(const char *name)
+{
+	struct rwlock *rwlock;
+	rwlock = kmalloc(sizeof(*rwlock));
+	if(rwlock == NULL)
+	{
+		return NULL;
+	}
+
+	rwlock->rwlock_name = kstrdup(name);
+	if(rwlock->rwlock_name == NULL)
+	{
+		kfree(rwlock);
+		return NULL;
+	}
+
+	rwlock->cvariable = cv_create(name);
+	if(rwlock->cvariable == NULL)
+	{
+		kfree(rwlock->rwlock_name);
+		kfree(rwlock);
+		return NULL;
+	}
+
+	rwlock->sleep_lock = lock_create(name);
+	if(rwlock->sleep_lock == NULL)
+	{
+		cv_destroy(rwlock->cvariable);
+		kfree(rwlock->rwlock_name);
+		kfree(rwlock);
+		return NULL;
+	}
+
+	rwlock->data=0;
+	rwlock->write_thread=NULL;
+	rwlock->read_threadcount=0;
+	rwlock->is_anyone_waiting=false;
+
+	return rwlock;
+
+}
+
+void rwlock_destroy(struct rwlock *rwlock)
+{
+	KASSERT(rwlock != NULL);
+	KASSERT(rwlock->data==0);
+	KASSERT(!rwlock->is_anyone_waiting);
+	rwlock->write_thread = NULL;
+	//spinlock_cleanup(&rwlock->splk);
+	//array_cleanup(rwlock->read_threads);
+	//threadlist_cleanup(&rwlock->read_threadlist);
+	cv_destroy(rwlock->cvariable);
+	lock_destroy(rwlock->sleep_lock);
+	kfree(rwlock->rwlock_name);
+	kfree(rwlock);
+}
+
+void rwlock_acquire_read(struct rwlock *rwlock)
+{
+	KASSERT(rwlock != NULL);
+	
+	lock_acquire(rwlock->sleep_lock);
+	while(rwlock->data>1 || rwlock->is_anyone_waiting)
+	{
+		rwlock->is_anyone_waiting = true;
+		cv_wait(rwlock->cvariable, rwlock->sleep_lock);
+	}
+	KASSERT(rwlock->data<=1);
+	//KASSERT(!rwlock->is_anyone_waiting);
+	rwlock->data=1;
+	rwlock->read_threadcount+=1;
+	//array_add(rwlock->read_threads, curthread, NULL);
+	//threadlist_addtail(&rwlock->read_threadlist, curthread);
+	lock_release(rwlock->sleep_lock);
+	
+}
+
+void rwlock_release_read(struct rwlock *rwlock)
+{
+	KASSERT(rwlock != NULL);
+	KASSERT(rwlock->data == 1);
+	KASSERT(rwlock->write_thread==NULL);
+	//KASSERT(do_i_hold_read(rwlock));
+	lock_acquire(rwlock->sleep_lock);
+	//unsigned num = array_num(rwlock->read_threads);
+	if(rwlock->read_threadcount > 1)
+	{
+		rwlock->read_threadcount-=1;
+	}
+	else
+	{
+		KASSERT(rwlock->read_threadcount==1);
+		rwlock->data=0;
+		rwlock->is_anyone_waiting=false;
+		rwlock->read_threadcount=0;
+		cv_broadcast(rwlock->cvariable, rwlock->sleep_lock);
+	}
+	lock_release(rwlock->sleep_lock);
+}
+
+void rwlock_acquire_write(struct rwlock *rwlock)
+{
+	KASSERT(rwlock != NULL);
+	lock_acquire(rwlock->sleep_lock);
+	while(rwlock->data!=0)
+	{
+		rwlock->is_anyone_waiting = true;
+		cv_wait(rwlock->cvariable, rwlock->sleep_lock);
+	}
+	KASSERT(rwlock->data==0);
+	KASSERT(rwlock->read_threadcount==0);
+	rwlock->data=2;
+	rwlock->write_thread = curthread;
+	lock_release(rwlock->sleep_lock);
+
+}
+
+void rwlock_release_write(struct rwlock *rwlock)
+{
+	KASSERT(rwlock != NULL);
+	KASSERT(rwlock->data==2);
+	//KASSERT(do_i_hold_write(rwlock));
+	lock_acquire(rwlock->sleep_lock);
+	rwlock->data=0;
+	rwlock->is_anyone_waiting=false;
+	rwlock->write_thread=NULL;
+	cv_broadcast(rwlock->cvariable, rwlock->sleep_lock);
+	lock_release(rwlock->sleep_lock);
+
+}
+

@@ -157,13 +157,16 @@ bool cv_isempty(struct cv *cv, struct lock *lock);
  */
 
 struct rwlock {
-        char *rwlk_name;
-	struct wchan *rwlock_write_wchan;
-	struct wchan *rwlock_read_wchan;
-	struct spinlock rwlock_splk; //lock_spinlock 
-	// Object to track which kinds of thread are holding the lock.
-	volatile signed rwlock_data;
-	//struct thread *rwlock_thread;
+        char *rwlock_name;
+	volatile unsigned data;
+	volatile bool is_anyone_waiting;
+	struct thread *write_thread;
+	//struct array *read_threads;
+	volatile unsigned read_threadcount;
+	struct cv *cvariable; 
+	struct lock *sleep_lock;
+//	struct spinlock splk;
+//	volatile bool is_lock_free;
         // add what you need here
         // (don't forget to mark things volatile as needed)
 };
