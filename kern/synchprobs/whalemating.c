@@ -40,34 +40,69 @@
 #include <test.h>
 #include <synch.h>
 
+static struct cv *cv_male;
+static struct cv *cv_female;
+static struct cv *cv_mmaker;
+static struct lock *lock_male;
+static struct lock *lock_female;
+static struct lock *lock_mmaker;
+
 /*
  * Called by the driver during initialization.
  */
 
 void whalemating_init() {
-	//I am not sure if we should modify this function call.
-	cv_create(cv_males);
-	lock_create(lock_males);
-	cv_create(cv_females);
-	lock_create(lock_females);
-	cv_create(cv_mmakers);
-	lock_create(lock_mmakers);
-	return;//I'm not sure if these objects are maintained after exiting this function.
+	cv_male = cv_create("cv for males");
+	if (cv_male == NULL)
+	{
+		panic("cv_males creation failed!\n");
+	}
+	
+	lock_male = lock_create("lock for male cv");
+	if (lock_male == NULL)
+	{
+		panic("lock_males creation failed!\n");
+	}
+	
+	cv_female = cv_create("cv for females");
+	if (cv_female == NULL)
+	{
+		panic("cv_females creation failed!\n");
+	}
+	
+	lock_female = lock_create("lock for female cv");
+	if (lock_female == NULL)
+	{
+		panic("lock_females creation failed!\n");
+	}
+	
+	cv_mmaker = cv_create("cv for match makers");
+	if (cv_mmaker == NULL)
+	{
+		panic("cv_mmakers creation failed!\n");
+	}
+	
+	lock_mmaker = lock_create("lock for mmaker cv");
+	if (lock_mmaker == NULL)
+	{
+		panic("lock_mmakers creation failed!\n");
+	}
+	
+	return;
 }
 
 /*
  * Called by the driver during teardown.
  */
-//REMEMBER TO ADJUST synchprobs.c BEFORE TESTING IF FUNCTION ARGS ARE ADDED!
 
 void
 whalemating_cleanup() {
-	cv_destroy(cv_males);
-	lock_destroy(lock_males);
-	cv_destroy(cv_females);
-	lock_destroy(lock_females);
-	cv_destroy(cv_mmakers);
-	lock_destroy(lock_mmakers);
+	cv_destroy(cv_male);
+	lock_destroy(lock_male);
+	cv_destroy(cv_female);
+	lock_destroy(lock_female);
+	cv_destroy(cv_mmaker);
+	lock_destroy(lock_mmaker);
 	return;
 }
 
@@ -75,6 +110,7 @@ void
 male(uint32_t index)
 {
 	(void)index;
+	male_start(index);
 	//uint32_t is an unsigned int managed by the driver.
 	//Just pass the start and end functions the index variable.
 	/*
@@ -111,8 +147,10 @@ male(uint32_t index)
 	//The locks are acquired right now so that no two threads end up
 	//  satisfying the condition at once. Otherwise, one thread may
 	//  empty out a cv while the other thinks it's full!
-	if(!cv_isempty(cv_female) && !cv_isempty(cv_mmaker))
-	{
+	if(!cv_isempty(cv_female, lock_female) && !cv_isempty(cv_mmaker, lock_mmaker))
+	{//THERE MUST HAVE BEEN A DEADLOCK!
+	//I DON'T KNOW HOW! Whenever mmaker_lock is held, the holder will stay awake and finish their task. Then release it.
+	//HOWEVER, threads waking from cv_wait will need their locks to continue. Can those locks get stolen?
 		cv_signal(cv_female, lock_female);
 		cv_signal(cv_mmaker, lock_mmaker);
 
@@ -130,7 +168,6 @@ male(uint32_t index)
 		lock_release(lock_male);
 	}
 	
-	male_start(index);
 	male_end(index);
 	return;
 }
@@ -139,16 +176,15 @@ void
 female(uint32_t index)
 {
 	(void)index;
+	female_start(index);
 	/*
 	 * Implement this function by calling female_start and female_end when
 	 * appropriate.
 	 */
 	lock_acquire(lock_male);
 	lock_acquire(lock_mmaker);
-	//The locks are acquired right now so that no two threads end up
-	//  satisfying the condition at once. Otherwise, one thread may
-	//  empty out a cv while the other thinks it's full!
-	if(!cv_isempty(cv_male) && !cv_isempty(cv_mmaker))
+	
+	if(!cv_isempty(cv_male, lock_male) && !cv_isempty(cv_mmaker, lock_mmaker))
 	{
 		cv_signal(cv_male, lock_male);
 		cv_signal(cv_mmaker, lock_mmaker);
@@ -167,7 +203,6 @@ female(uint32_t index)
 		lock_release(lock_female);
 	}
 	
-	female_start(index);
 	female_end(index);
 	return;
 }
@@ -176,16 +211,15 @@ void
 matchmaker(uint32_t index)
 {
 	(void)index;
+	matchmaker_start(index);
 	/*
 	 * Implement this function by calling matchmaker_start and matchmaker_end
 	 * when appropriate.
 	 */
 	lock_acquire(lock_female);
 	lock_acquire(lock_male);
-	//The locks are acquired right now so that no two threads end up
-	//  satisfying the condition at once. Otherwise, one thread may
-	//  empty out a cv while the other thinks it's full!
-	if(!cv_isempty(cv_female) && !cv_isempty(cv_male))
+	
+	if(!cv_isempty(cv_female, lock_female) && !cv_isempty(cv_male, lock_male))
 	{
 		cv_signal(cv_female, lock_female);
 		cv_signal(cv_male, lock_male);
@@ -204,8 +238,7 @@ matchmaker(uint32_t index)
 		lock_release(lock_mmaker);
 	}
 	
-	mmaker_start(index);
-	mmaker_end(index);
+	matchmaker_end(index);
 	return;
 }
 
