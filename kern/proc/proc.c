@@ -50,6 +50,40 @@
 #include <vnode.h>
 
 /*
+ *File table functions HERE!
+ */
+struct file_table *
+ft_create(const char *name)
+{
+	struct file_table *file_table;
+	int i = 0;
+
+	file_table = kmalloc(sizeof(*file_table));
+	if (file_table == NULL) {
+		return NULL;
+
+	//We are giving the ft the process' name.
+	file_table->proc_name = kstrdup(name);
+	if (file_table->proc_name == NULL) {
+		kfree(file_table);
+		return NULL;
+
+	//Array holding pointers to file handles.
+	//Exactly 64 elements at the recommendation of Geoffery.
+	for(i=0; i<63; i++)
+	{
+		file_table->file_handle_arr[i] = kmalloc(sizeof(struct file_handle));
+	}
+
+	//Track the process which created this file table. (WILL NEED TO BE CHANGED WHEN FORK IS IMPLEMENTED!)
+	file_table->proc = curthread->t_proc;
+
+	//Next step is to fill the first three elements of file_handle_arr.
+	file_table->file_handle_arr[0] = 
+}
+
+
+/*
  * The process for the kernel; this holds all the kernel-only threads.
  */
 struct proc *kproc;
@@ -81,6 +115,10 @@ proc_create(const char *name)
 
 	/* VFS fields */
 	proc->p_cwd = NULL;
+
+	/*Process File Table */
+	proc->proc_ftable = ft_create(proc->p_name)
+	//Will do ft_init() as part of ft_create.
 
 	return proc;
 }
