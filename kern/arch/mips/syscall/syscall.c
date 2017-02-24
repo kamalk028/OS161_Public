@@ -35,6 +35,11 @@
 #include <thread.h>
 #include <current.h>
 #include <syscall.h>
+#include <uio.h>
+#include <vfs.h>
+#include <vnode.h>
+#include <kern/fcntl.h>
+#include <proc.h>
 
 
 /*
@@ -109,6 +114,25 @@ syscall(struct trapframe *tf)
 				 (userptr_t)tf->tf_a1);
 		break;
 
+	    case SYS_open:/* Adding the case statement for Open syscall;
+		* We should make the function call.
+		* 
+		* */
+		err = open((char*)&tf->tf_a0, tf->tf_a1, tf->tf_a2);
+		/*
+		   if the retval is not one of the error code then set err=0;
+		   else set err=retval
+		   If this part of the code can do that then
+		   either return value or the error code is gonna go inside v0
+		 */
+		break;
+
+	    case SYS_write:
+		//kprintf("inside syscall: mycode gets called.. \n");
+		//err = write(tf->tf_a0, (void *)tf->tf_a1, tf->tf_a2, &retval);
+		err = ft_write(tf->tf_a0, (void *)tf->tf_a1, tf->tf_a2, get_curproc_ft());
+		break;
+
 	    /* Add stuff here */
 
 	    default:
@@ -145,6 +169,85 @@ syscall(struct trapframe *tf)
 	/* ...or leak any spinlocks */
 	KASSERT(curthread->t_iplhigh_count == 0);
 }
+
+int open(const char *filename, int flags, mode_t mode)
+{
+	/*
+	 	Get pointer to the current process' file table,
+		Get pointer to the current proc using curthread
+		call fileopen function that takes in a filetable
+	 */
+	(void) filename;
+	(void) flags;
+	(void) mode;
+	return 0;
+}
+
+/*int write(int fd, const void* buff, size_t bufflen, int* retval)
+{
+	(void) fd;
+	struct vnode *vnode;
+	struct iovec iov;
+	struct uio ku;
+	int err=0;
+	//int flags;
+	off_t pos=0;
+	char *fname;
+	//char *dup_fname;
+	//dup_fname=kstrdup("con:");
+	struct proc* process;
+	process = curthread->t_proc;
+	vnode=process->vn;
+	fname=kstrdup("con:");
+	//dup
+
+	//flags=O_WRONLY;
+	if(fd == 0)
+	{
+		fname=kstrdup("con:");
+		flags=O_WRONLY;//STDIN;
+	}
+	else if(fd == 1)
+	{
+		fname=kstrdup("con:");
+		flags=O_WRONLY;
+	}
+	else if(fd == 2)
+	{
+		fname=kstrdup("con:");
+		flags=O_WRONLY;
+	}
+	else
+	{
+		kprintf("fd > 2, we have not implemented it yet");
+		return -1;
+	}*/
+	//err = vfs_open(dup_fname, flags, 0664, &vn);
+	//kprintf("vfs_open has worked, the return int is %d\n", err);
+/*	if(err)
+	{
+		kprintf("Could not open %s for write: %s\n", fname, strerror(err));
+		return -1;
+	}
+	uio_kinit(&iov, &ku,(void *) buff, bufflen, pos, UIO_WRITE);
+	err = VOP_WRITE(vnode, &ku);
+	if(err)
+	{
+		kprintf("%s: Write error: %s\n", fname, strerror(err));
+		//vfs_close(vn);
+		vfs_remove(fname);
+		return -1;
+	}
+
+	
+	   Handling for fd > 2, we should move this function inside ft_write 
+	   Should implement following OOPS design already planned,
+	   design avaiable in notebook.
+	 */
+/*	(void) retval;
+	return 0;
+
+}*/
 
 /*
  * Enter user mode for a newly forked process.
