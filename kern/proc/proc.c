@@ -48,6 +48,12 @@
 #include <current.h>
 #include <addrspace.h>
 #include <vnode.h>
+#include <vfs.h>
+#include <kern/fcntl.h>
+#include <lib.h>
+#include <uio.h>
+#include <fs.h>
+
 
 /*
  *File table functions HERE!
@@ -107,6 +113,14 @@ proc_create(const char *name)
 		return NULL;
 	}
 
+	proc->ft = ft_create(name);
+	if(proc->ft == NULL)
+	{
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+
 	proc->p_numthreads = 0;
 	spinlock_init(&proc->p_lock);
 
@@ -138,7 +152,8 @@ proc_destroy(struct proc *proc)
 	 * your wait/exit design calls for the process structure to
 	 * hang around beyond process exit. Some wait/exit designs
 	 * do, some don't.
-	 */
+	 */                                                                     
+	//, it's just for reference or debugging anyway.                                     | * Destroy a
 
 	KASSERT(proc != NULL);
 	KASSERT(proc != kproc);
@@ -154,6 +169,9 @@ proc_destroy(struct proc *proc)
 		VOP_DECREF(proc->p_cwd);
 		proc->p_cwd = NULL;
 	}
+
+	ft_destroy(proc->ft);
+
 
 	/* VM fields */
 	if (proc->p_addrspace) {
@@ -206,6 +224,7 @@ proc_destroy(struct proc *proc)
 	KASSERT(proc->p_numthreads == 0);
 	spinlock_cleanup(&proc->p_lock);
 
+	//kfree(proc->vn);
 	kfree(proc->p_name);
 	kfree(proc);
 }
@@ -237,6 +256,21 @@ proc_create_runprogram(const char *name)
 	if (newproc == NULL) {
 		return NULL;
 	}
+
+	/**
+	  Initialise console in write mode
+	  Just to pass 2.1
+	  Should change after submission
+	 */
+	ft_init(newproc->ft);
+	/*char fname[30];
+	strcpy(fname, "con:");
+	int err;
+	err = vfs_open(fname, O_WRONLY, 0664, &newproc->vn);	
+	if(err)
+	{
+		kprintf("Could not open %s for write: %s\n", fname, strerror(err));
+	}*/
 
 	/* VM fields */
 
@@ -355,4 +389,193 @@ proc_setas(struct addrspace *newas)
 	proc->p_addrspace = newas;
 	spinlock_release(&proc->p_lock);
 	return oldas;
+}
+
+/*
+   Implementing functions involving File Table (file_table) 
+*/
+
+struct file_table* ft_create (const char *name)
+{
+	struct file_table* ft;
+	ft = kmalloc(sizeof(*ft));
+	if(ft == NULL)
+	{
+		return NULL;
+	}
+	ft->proc_name = kstrdup(name);
+	if(ft->proc_name == NULL)
+	{
+		kfree(ft);
+		return NULL;
+	}
+	ft->file_handle_arr = array_create();
+	if(ft->file_handle_arr == NULL)
+	{
+		kfree(ft->proc_name);
+		kfree(ft);
+		return NULL;
+	}
+	array_init(ft->file_handle_arr);
+	//ft_init(ft);
+	ft->proc = NULL;
+	return ft;
+}
+
+void ft_init(struct file_table* ft)
+{
+	KASSERT(ft != NULL);
+	struct file_handle* fh_read;
+	struct file_handle* fh_write;
+	fh_read = fh_create("con:");
+	fh_write = fh_create("con:");
+	//fh_open("con:", O_RDONLY, fh_read);
+	fh_open("con:", O_WRONLY, fh_write);
+	unsigned idx;
+	array_add(ft->file_handle_arr, fh_read, &idx);
+	array_add(ft->file_handle_arr, fh_write, &idx);
+//	array_add(ft->file_handle_arr, fh_write, &idx);
+	return;
+}
+
+void ft_destroy(struct file_table *ft)
+{
+	KASSERT(ft != NULL);
+	ft->proc = NULL;
+	kfree(ft->proc_name);
+	array_cleanup(ft->file_handle_arr);
+	kfree(ft->file_handle_arr);
+	kfree(ft);
+	return;
+}
+
+struct file_table* get_curproc_ft()
+{
+	return curthread->t_proc->ft;
+}
+
+int ft_write(int fd, void* buff, size_t bufflen, struct file_table *ft)
+{
+	struct file_handle *fh;
+	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
+
+	int err;
+	err = 0;
+	if(fd!=1)
+	{
+		char* dup_fname = kstrdup(fh->file_name);
+		err = fh_open(dup_fname, O_WRONLY, fh);
+	}
+	if(err)
+	{
+		//kprintf("Error occurred while opening con: for writing. FROM: ft_write\n");
+	}
+	err=fh_write(buff, bufflen, fh);
+	if(err)
+	{
+	return err;
+	}
+	//kprintf("Buff len returned: %d\n", err);
+	/*if(err)
+	{
+		kprintf("Error occurred while writing to file: %s\n", fh->file_name);
+		return err;
+	}*/
+	return 0;
+}
+
+int ft_open(const char *file, int flags, struct file_table *ft)
+{
+	unsigned idx;
+	idx = 0; //You need to double check this: initialising because of a compile error
+	struct file_handle* fh;
+	fh = fh_create(file);
+	int err;
+	err = fh_open(file,flags,fh);
+	if(err)
+	{
+		//kprintf("Error occurred while opening file: %s in mode: %d\n", file, flags);
+		return err;
+	}
+
+	array_add(ft->file_handle_arr, fh, &idx);
+	return idx;
+}
+
+
+/*
+   Implementing functions involving File Handle (file_handle)
+ */
+
+struct file_handle* fh_create(const char* file_name)
+{
+	KASSERT(file_name != NULL);
+	struct file_handle* fh;
+	fh = kmalloc(sizeof(*fh));
+	if(fh == NULL)
+	{
+		return NULL;
+	}
+
+	fh->file_name = kstrdup(file_name);
+	if(fh->file_name == NULL)
+	{
+		kfree(fh);
+		return NULL;
+	}
+
+	fh->vnode = NULL;
+	fh->offset = 0;
+	spinlock_init(&fh->fh_splk);
+	fh->flags = 0;
+	
+	return fh;
+}
+
+void fh_destroy(struct file_handle *fh)
+{
+	KASSERT(fh != NULL);
+	spinlock_cleanup(&fh->fh_splk);
+	fh->vnode = NULL;
+	fh->flags = 0;
+	fh->offset = 0;
+	kfree(fh->file_name);
+	kfree(fh);
+	return;
+}
+
+int fh_open(const char* file, int flags, struct file_handle* fh)
+{
+	char dup_fname[16];
+	strcpy(dup_fname, file);
+	int err;
+	err = vfs_open(dup_fname, flags, 0664, &fh->vnode);
+	if(err)
+	{
+	//	kprintf("Error while trying to open file: %s, with flag: %d\n", file, flags);
+		return err;
+	}
+	return 0;
+
+}
+
+
+int fh_write(void* buff, size_t bufflen, struct file_handle* fh)
+{
+	struct iovec iov;
+	struct uio uio;
+	uio_uinit(&iov, &uio, buff, bufflen, fh->offset, UIO_WRITE);
+	int err;
+	err = VOP_WRITE(fh->vnode, &uio);
+	if(err)
+	{
+		//kprintf("Error while trying to write to file: %s\n",fh->file_name);
+		return err;
+	}
+	/* you should calculate offset
+	   check if all the bytes are written
+	   give out appropriate error codes.
+	 */
+	//vfs_close(fh->vnode);
+	return 0;
 }
