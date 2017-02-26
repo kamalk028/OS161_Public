@@ -75,7 +75,7 @@ void V(struct semaphore *);
 struct lock {
         char *lk_name;
 	struct wchan *lock_wchan;
-	struct spinlock lock_splk; //lock_spinlock 
+	struct spinlock lock_splk; //lock_spinlock
 	// Can change lock_data to boolean later if mem usage is too high or something.
 	volatile unsigned lock_data;
 	// Object to track thread which currently holds the lock.

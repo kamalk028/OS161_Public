@@ -56,9 +56,9 @@
 
 
 /*
- *File table functions HERE!
+ *Here are the remnants of my unfinished attempt at initializing file table.
  */
-struct file_table *
+/*struct file_table *
 ft_create(const char *name)
 {
 	struct file_table *file_table;
@@ -85,8 +85,8 @@ ft_create(const char *name)
 	file_table->proc = curthread->t_proc;
 
 	//Next step is to fill the first three elements of file_handle_arr.
-	file_table->file_handle_arr[0] = 
-}
+	file_table->file_handle_arr[0] =
+}*/
 
 
 /*
@@ -130,10 +130,10 @@ proc_create(const char *name)
 	/* VFS fields */
 	proc->p_cwd = NULL;
 
-	/*Process File Table */
+	/*Process File Table
 	proc->proc_ftable = ft_create(proc->p_name)
 	//Will do ft_init() as part of ft_create.
-
+	*/
 	return proc;
 }
 
@@ -456,6 +456,9 @@ struct file_table* get_curproc_ft()
 
 int ft_write(int fd, void* buff, size_t bufflen, struct file_table *ft)
 {
+	//Currently, this is called immidiately within the SYS_write case in syscall.c
+	//We need to implement the actual sys_write function properly.
+	//This has no error handling.
 	struct file_handle *fh;
 	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
 

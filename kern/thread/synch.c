@@ -425,6 +425,12 @@ struct rwlock * rwlock_create(const char *name)
 		return NULL;
 	}
 
+	/*rwlock->data parameters:
+	* 0 = Nobody holds.
+	* 1 = Any number of readers hold.
+	*   rwlock->read_threadcount tracks how many readers.
+	* 2 = Writer holds.
+	*/
 	rwlock->data=0;
 	rwlock->write_thread=NULL;
 	rwlock->read_threadcount=0;

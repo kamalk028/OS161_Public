@@ -41,14 +41,15 @@ struct trapframe; /* from <machine/trapframe.h> */
 void syscall(struct trapframe *tf);
 
 /*
-   declaring read and write operations, 
+   Declaring file syscalls.
    we should move it to another file 
    after submitting 2.1: 
    Pl leave the comment, so it would be nice. 
-*/
 
-int open(const char *filename, int flags, mode_t mode) ;
-int write(int fd, const void* buff, size_t bufflen, int* retval);
+	UPDATE: It is much simpler to leave them here, actually.
+*/
+int sys_open(const char *filename, int flags, mode_t mode);
+//int sys_write(int fd, const void* buff, size_t bufflen, int* retval);
 
 /*
  * Support functions.

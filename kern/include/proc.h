@@ -81,42 +81,6 @@ int fh_write(void* buff, size_t bufflen, struct file_handle* fh);//To write to a
 //int fh_read(void *buf, size_t buflen);
 
 
-
-/*
-	Declare prototype for file_table and file_handle below
-	WE MAY WANT TO MOVE THIS INSIDE THE PROCESS DATA STRUCTURE!
-*/
-
-struct file_table {
-	char *proc_name; //we are giving the process name to the file_table as well, it's just for reference or debugging anyway.
-	struct file_handle *file_handle_arr[64]; //Array holding file_handle pointers, maximum 64 entries.
-	struct proc *proc; //Pointer to the process to whom this file_table belongs to.
-}
-struct file_table* ft_create(char *name); //allocating memory or initializing all the components
-//void ft_init(struct file_table* ft);//Creates 0,1,2 file descriptors reserved for console. DONE IN ft_create.
-void ft_destroy(struct file_table* ft); //Freeing the memory of the attributes
-int ft_open(const char *file, int flags, struct file_table* ft); //#Not implemented: Creates and stores file handle for the file in file_handle_arr and returns the index of the file_handle
-//Please implement ft_open and fh_open
-int ft_write(int fd, void* buff, size_t bufflen);
-
-struct file_handle {
-	char *file_name;//File name is stored for debugging
-	struct vnode *vnode;//File object
-	volatile unsigned offset;//
-	struct spinlock fh_splk;//spinlock to change values of attributes like offset, thread_cnt and write_thread
-	//mode_t mode;
-	//volatile unsigned thread_cnt;
-	//struct thread *write_thread;
-	int flags;//flag in which the file is open
-	struct uio *uio;//user IO buffer for read and write operations
-}
-struct file_handle* fh_create(char *file_name);//allocates memory or initializing all the attributes
-void fh_destroy(struct file_handle *fh);//freeing the mem allocated
-int fh_open(const char *file, int flags);
-//int fh_read(void *buf, size_t buflen);
-
-
-
 /*
  * Process structure.
  *
