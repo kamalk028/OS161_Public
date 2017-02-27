@@ -40,7 +40,7 @@
 #include <vnode.h>
 #include <kern/fcntl.h>
 #include <proc.h>
-//#include <file_syscalls.h>
+#include <file_syscalls.h>
 
 /*
  * System call dispatcher.

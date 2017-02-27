@@ -4,15 +4,23 @@
  *  The file system syscalls will be called here from syscall.c
  */
 
-#include <unistd.h>
-#include <fcntl.h>
-#include <copyinout.h>
+//#include <unistd.h> 
+/*
+ Commenting out the include files.
+ because bmake depend throws error saying cannot locate the include files.
+ We can add more include files as and when we want.
+ */
+//#include <fcntl.h>
+//#include <copyinout.h>
 #include <syscall.h>
-#include <vfs.h>
-#include <proc.h>
-#include <thread.h>
-#include <current.h>
-#include <synch.h>
+#include <types.h>
+#include <kern/syscall.h>
+#include <file_syscalls.h>
+//#include <vfs.h>
+//#include <proc.h>
+//#include <thread.h>
+//#include <current.h>
+//#include <synch.h>
 //May need more synch primitives.
 
 int
