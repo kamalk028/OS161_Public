@@ -40,7 +40,7 @@
 #include <vnode.h>
 #include <kern/fcntl.h>
 #include <proc.h>
-//#include <file_syscalls.h>
+#include <file_syscalls.h>
 
 /*
  * System call dispatcher.
@@ -114,17 +114,14 @@ syscall(struct trapframe *tf)
 				 (userptr_t)tf->tf_a1);
 		break;
 
-	    case SYS_open:/* Adding the case statement for Open syscall;
-		* We should make the function call.
-		* Small note: originally used &tf->tf_a0 as first arg.
-		* */
-		err = sys_open((char *)tf->tf_a0, tf->tf_a1, (mode_t)tf->tf_a2);
+	    case SYS_open:
+		/* IF WEIRD ERRORS OCCUR, CHANGE THE &retval ARGUMENT TO &tf->tf_a3*/
+		err = sys_open((char *)&tf->tf_a0, tf->tf_a1, (mode_t)tf->tf_a2, &retval);
 		/*
-		   if the retval is not one of the error code then set err=0;
-		   else set err=retval
-		   If this part of the code can do that then
-		   either return value or the error code is gonna go inside v0
-		 */
+		    retval is passed by reference, err is actually returned.
+		    err will always be returned as zero, unless there was actually an error.
+		    If there was an error, retval should = -1, and err should have an error code.
+		*/
 		break;
 
 	    case SYS_write:

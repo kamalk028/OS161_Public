@@ -464,9 +464,11 @@ int ft_write(int fd, void* buff, size_t bufflen, struct file_table *ft)
 
 	int err;
 	err = 0;
+	//WE WILL WANT MORE fd HANDLERS THAN JUST THIS!
 	if(fd!=1)
 	{
 		char* dup_fname = kstrdup(fh->file_name);
+		//NEVER call fh_open from here! Kamal has already addressed this.
 		err = fh_open(dup_fname, O_WRONLY, fh);
 	}
 	if(err)
@@ -487,8 +489,9 @@ int ft_write(int fd, void* buff, size_t bufflen, struct file_table *ft)
 	return 0;
 }
 
-int ft_open(const char *file, int flags, struct file_table *ft)
+int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft)
 {
+	//May want to take mode_t arg.
 	unsigned idx;
 	idx = 0; //You need to double check this: initialising because of a compile error
 	struct file_handle* fh;
@@ -547,11 +550,14 @@ void fh_destroy(struct file_handle *fh)
 	return;
 }
 
-int fh_open(const char* file, int flags, struct file_handle* fh)
+int fh_open(const char* file, int flags, mode_t mode, struct file_handle* fh)
 {
-	char dup_fname[16];
+	char dup_fname[16];//Why are file names limited to 16 characters? I thought characters were 1-bit each.
 	strcpy(dup_fname, file);
 	int err;
+	//0664 implies write permission, but that probably shouldn't ALWAYS go there...
+	//Instead, perhaps mode_t should be passed in, since sys_open takes that anyway.
+	//sys_write depends on this function. That should probably change.
 	err = vfs_open(dup_fname, flags, 0664, &fh->vnode);
 	if(err)
 	{

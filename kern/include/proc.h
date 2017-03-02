@@ -59,7 +59,7 @@ struct file_table* get_curproc_ft(void);
  //index of the file_handle
 //Please implement ft_open and fh_open
 int ft_write(int fd, void* buff, size_t bufflen, struct file_table* ft);
-int ft_open(const char *file, int flags, struct file_table* ft); //#Not implemented: Creates and stores file handle for the file in file_handle_arr and returns the
+int ft_open(const char *file, int flags, mode_t mode, struct file_table* ft); //#Not implemented: Creates and stores file handle for the file in file_handle_arr and returns the
 
 
 struct file_handle {
@@ -76,7 +76,7 @@ struct file_handle {
 
 struct file_handle* fh_create(const char *file_name);//allocates memory or initializing all the attributes
 void fh_destroy(struct file_handle *fh);//freeing the mem allocated
-int fh_open(const char *file, int flags, struct file_handle* fh);//#Not implemented yet. To open a file and acquire a file object to that file
+int fh_open(const char *file, int flags, mode_t mode, struct file_handle* fh);//#Not implemented yet. To open a file and acquire a file object to that file
 int fh_write(void* buff, size_t bufflen, struct file_handle* fh);//To write to a file object 
 //int fh_read(void *buf, size_t buflen);
 

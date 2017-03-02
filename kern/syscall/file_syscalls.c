@@ -4,28 +4,34 @@
  *  The file system syscalls will be called here from syscall.c
  */
 
-#include <unistd.h>
-#include <fcntl.h>
-#include <copyinout.h>
+#include <types.h>
+//#include <unistd.h>
+//#include <fcntl.h>
+//#include <copyinout.h>
 #include <syscall.h>
-#include <vfs.h>
+#include <kern/syscall.h>
+#include <file_syscalls.h>
+//#include <vfs.h>
 #include <proc.h>
 #include <thread.h>
-#include <current.h>
-#include <synch.h>
+//#include <current.h>
+//#include <synch.h>
 //May need more synch primitives.
 
 int
-sys_open(const char *filename, int flags, mode_t mode)
+sys_open(const char *filename, int flags, mode_t mode, int *retval)
 {
 	/*
 	 	Get pointer to the current process' file table,
 		Get pointer to the current proc using curthread
 		call fileopen function that takes in a filetable
 	 */
-	(void) filename;
-	(void) flags;
-	(void) mode;
+	//REMEMBER TO UPDATE INCLUDE STATEMENTS FOR CERTAIN ARGS!!
+	err = ft_open(&filename, flags, mode, curthread->t_proc->proc_ftable;
+	//WHAT DO WE DO WITH retval?
+	//(void) filename;
+	//(void) flags;
+	//(void) mode;
 	return 0;
 }
 
