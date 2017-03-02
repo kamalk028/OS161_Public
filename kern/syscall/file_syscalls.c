@@ -4,17 +4,22 @@
  *  The file system syscalls will be called here from syscall.c
  */
 
-#include <types.h>
-//#include <unistd.h>
+//#include <unistd.h> 
+/*
+ Commenting out the include files.
+ because bmake depend throws error saying cannot locate the include files.
+ We can add more include files as and when we want.
+ */
 //#include <fcntl.h>
 //#include <copyinout.h>
 #include <syscall.h>
+#include <types.h>
 #include <kern/syscall.h>
 #include <file_syscalls.h>
-//#include <vfs.h>
+#include <kern/errno.h>
 #include <proc.h>
 #include <thread.h>
-//#include <current.h>
+#include <current.h>
 //#include <synch.h>
 //May need more synch primitives.
 
@@ -35,6 +40,15 @@ sys_open(const char *filename, int flags, mode_t mode, int *retval)
 	return 0;
 }
 
+int sys_write(int fd, void* buff, size_t len, int* ret)
+{
+	*ret = 0;
+	struct file_table *ft;
+	KASSERT(curproc != NULL);
+	ft = curproc->ft;
+	KASSERT(ft != NULL); 
+	return ft_write(fd, buff, len, ft, ret);
+}
 
 
 

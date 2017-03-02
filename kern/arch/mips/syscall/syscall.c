@@ -125,9 +125,7 @@ syscall(struct trapframe *tf)
 		break;
 
 	    case SYS_write:
-		//kprintf("inside syscall: mycode gets called.. \n");
-		//err = write(tf->tf_a0, (void *)tf->tf_a1, tf->tf_a2, &retval);
-		err = ft_write(tf->tf_a0, (void *)tf->tf_a1, tf->tf_a2, get_curproc_ft());
+		err = sys_write(tf->tf_a0, (void *)tf->tf_a1, (size_t)tf->tf_a2, &retval);
 		break;
 
 	    /* Add stuff here */
