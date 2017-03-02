@@ -116,7 +116,7 @@ syscall(struct trapframe *tf)
 
 	    case SYS_open:
 		/* IF WEIRD ERRORS OCCUR, CHANGE THE &retval ARGUMENT TO &tf->tf_a3*/
-		err = sys_open((char *)&tf->tf_a0, tf->tf_a1, (mode_t)tf->tf_a2, &retval);
+		err = sys_open((const_userptr_t)tf->tf_a0, tf->tf_a1, (mode_t)tf->tf_a2, &retval);
 		/*
 		    retval is passed by reference, err is actually returned.
 		    err will always be returned as zero, unless there was actually an error.

@@ -48,13 +48,13 @@ struct file_table {
 	struct array *file_handle_arr;
 	struct proc *proc;
 };
-struct file_table* ft_create(const char *name);
-void ft_init(struct file_table* ft);
-void ft_destroy(struct file_table* ft);
-struct file_table* get_curproc_ft(void);
+struct file_table *ft_create(const char *name);
+void ft_init(struct file_table *ft);
+void ft_destroy(struct file_table *ft);
+struct file_table *get_curproc_ft(void);
 
-int ft_write(int fd, void* buff, size_t bufflen, struct file_table* ft, int* retval);
-int ft_open(const char *file, int flags, mode_t mode, struct file_table* ft);
+int ft_write(int fd, void *buff, size_t bufflen, struct file_table *ft, int *retval);
+int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int *retval);
 
 /*File Handle Declaration*/
 struct file_handle {
@@ -68,8 +68,8 @@ struct file_handle {
 
 struct file_handle* fh_create(const char *file_name);
 void fh_destroy(struct file_handle *fh);
-int fh_open(const char *file, int flags, mode_t mode, struct file_handle* fh);
-int fh_write(void* buff, size_t bufflen, struct file_handle* fh, int* retval);
+int fh_open(const char *file, int flags, mode_t mode, struct file_handle *fh);
+int fh_write(void *buff, size_t bufflen, struct file_handle *fh, int *retval);
 
 
 /*

@@ -418,8 +418,8 @@ void ft_init(struct file_table* ft)
 	struct file_handle* fh_write;
 	fh_read = fh_create("con:");
 	fh_write = fh_create("con:");
-	fh_open("con:", O_RDONLY, fh_read);
-	fh_open("con:", O_WRONLY, fh_write);
+	fh_open("con:", O_RDONLY, 0664, fh_read);
+	fh_open("con:", O_WRONLY, 0664, fh_write);
 	unsigned idx;
 	array_add(ft->file_handle_arr, fh_read, &idx);
 	array_add(ft->file_handle_arr, fh_write, &idx);
@@ -439,12 +439,12 @@ void ft_destroy(struct file_table *ft)
 	return;
 }
 
-struct file_table* get_curproc_ft()
+struct file_table *get_curproc_ft()
 {
 	return curthread->t_proc->ft;
 }
 
-int ft_write(int fd, void* buff, size_t bufflen, struct file_table *ft, int* retval)
+int ft_write(int fd, void *buff, size_t bufflen, struct file_table *ft, int *retval)
 {
 	KASSERT(buff != NULL);
 	KASSERT(ft != NULL);
@@ -467,7 +467,7 @@ int ft_write(int fd, void* buff, size_t bufflen, struct file_table *ft, int* ret
 	{
 		kprintf("fhandle is null for the fd .... \n");
 		err = EBADF;
-		*retval = EBADF;
+		*retval = -1;//Based on man pages, this should return -1, not the errcode.
 		return err;
 	}
 	
@@ -475,21 +475,23 @@ int ft_write(int fd, void* buff, size_t bufflen, struct file_table *ft, int* ret
 	return err;
 }
 
-int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft)
+int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int *retval)
 {
-	//May want to take mode_t arg.
 	unsigned idx;
 	idx = 0; //Initialising because of a compile time error
 	struct file_handle* fh;
 	fh = fh_create(file);
-	int err;
-	err = fh_open(file,flags,fh);
+	int err = 0;//By default, assume no errors while err==0.
+	err = fh_open(file,flags,mode,fh);//If fh_open fails, then try passing fh by reference.
+	//err will now hold 0 unless fh_open failed.
 	if(err)
 	{
+		*retval = -1;
 		return err;
 	}
-	array_add(ft->file_handle_arr, fh, &idx);
-	return idx;
+	array_add(ft->file_handle_arr, fh, &idx);//ASSUMPTION: array_add fills in first available index.
+	*retval = idx;
+	return err;
 }
 
 
@@ -534,16 +536,15 @@ void fh_destroy(struct file_handle *fh)
 	return;
 }
 
-int fh_open(const char* file, int flags, mode_t mode, struct file_handle* fh)
+int fh_open(const char *file, int flags, mode_t mode, struct file_handle *fh)
 {
 	char *dup_fname = kstrdup(file);
 	//strcpy(dup_fname, file);
 	int err;
 	//0664 implies write permission, but that probably shouldn't ALWAYS go there...
 	//Instead, perhaps mode_t should be passed in, since sys_open takes that anyway.
-	//sys_write depends on this function. That should probably change.
-	err = vfs_open(dup_fname, flags, 0664, &fh->vnode);
-	if(err)
+	err = vfs_open(dup_fname, flags, mode, &fh->vnode);
+	if(err)//vfs_open should return 0 unless there was an error.
 	{
 		kprintf("Inside fh_open: Error while opening file: %s with flag %d\n", file, flags);
 		return err;
@@ -571,7 +572,7 @@ int fh_write(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 	}
 	uio_uinit(&iov, &uio, buff, bufflen, fh->offset, UIO_WRITE);
 	err = VOP_WRITE(fh->vnode, &uio);
-	if(err)
+	if(err)//ASSUMPTION: VOP_WRITE always returns zero unless there was an error.
 	{
 		*retval = err;
 		return err;
