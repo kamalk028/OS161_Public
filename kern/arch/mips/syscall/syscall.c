@@ -117,11 +117,18 @@ syscall(struct trapframe *tf)
 				 (userptr_t)tf->tf_a1);
 		break;
 
-	    case SYS_open:/* Adding the case statement for Open syscall;
-		* We should make the function call.
-		* Small note: originally used &tf->tf_a0 as first arg.
-		* */
-		err = sys_open((char *)tf->tf_a0, tf->tf_a1, (mode_t)tf->tf_a2, &retval);
+	    case SYS_open:
+		/* The retval arg should not be a problem. */
+		err = sys_open((const_userptr_t)tf->tf_a0, tf->tf_a1, (mode_t)tf->tf_a2, &retval);
+		/*
+		    retval is passed by reference, err is actually returned.
+		    err will always be returned as zero, unless there was actually an error.
+		    If there was an error, retval should = -1, and err should have an error code.
+		*/
+		break;
+
+	    case SYS_close:
+		err = sys_close(tf->tf_a0, &retval);
 		break;
 
 	    case SYS_write:

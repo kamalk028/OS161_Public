@@ -420,8 +420,8 @@ void ft_init(struct file_table* ft)
 	struct file_handle* fh_write;
 	fh_read = fh_create("con:");
 	fh_write = fh_create("con:");
-	fh_open("con:", O_RDONLY, fh_read);
-	fh_open("con:", O_WRONLY, fh_write);
+	fh_open("con:", O_RDONLY, 0664, fh_read);
+	fh_open("con:", O_WRONLY, 0664, fh_write);
 	unsigned idx;
 	array_add(ft->file_handle_arr, fh_read, &idx);
 	array_add(ft->file_handle_arr, fh_write, &idx);
@@ -441,7 +441,7 @@ void ft_destroy(struct file_table *ft)
 	return;
 }
 
-struct file_table* get_curproc_ft()
+struct file_table *get_curproc_ft()
 {
 	return curthread->t_proc->ft;
 }
@@ -466,13 +466,15 @@ bool is_valid_fd(int fd, struct file_table *ft)
 	return result;
 }
 
-int ft_write(int fd, void* buff, size_t bufflen, struct file_table *ft, int* retval)
+int ft_write(int fd, void *buff, size_t bufflen, struct file_table *ft, int *retval)
 {
 	KASSERT(buff != NULL);
 	KASSERT(ft != NULL);
 	KASSERT(retval != NULL);
 	int err;
 	err = 0;
+
+	//Checks for valid fd.
 	int num = array_num(ft->file_handle_arr);
 	if(fd < 0 || fd >= num)
 	{
@@ -480,6 +482,7 @@ int ft_write(int fd, void* buff, size_t bufflen, struct file_table *ft, int* ret
 		*retval = EBADF;
 		return err;	
 	}
+
 	struct file_handle *fh;
 	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
 	if(fh == NULL)
@@ -514,20 +517,23 @@ int ft_read(int fd, void* buff, size_t bufflen, struct file_table* ft, int* retv
 }
 
 
-int ft_open(const char *file, int flags, struct file_table *ft)
+int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int *retval)
 {
 	unsigned idx;
 	idx = 0; //Initialising because of a compile time error
 	struct file_handle* fh;
 	fh = fh_create(file);
-	int err;
-	err = fh_open(file,flags,fh);
+	int err = 0;//By default, assume no errors while err==0.
+	err = fh_open(file,flags,mode,fh);//If fh_open fails, then try passing fh by reference.
+	//err will now hold 0 unless fh_open failed.
 	if(err)
 	{
+		*retval = -1; //This is not correct
 		return err;
 	}
-	array_add(ft->file_handle_arr, fh, &idx);
-	return idx;
+	array_add(ft->file_handle_arr, fh, &idx);//ASSUMPTION: array_add fills in first available index.
+	*retval = idx;
+	return err;
 }
 
 int ft_lseek(int fd, off_t offset, int whence, struct file_table* ft, off_t* retval)
@@ -548,6 +554,35 @@ int ft_lseek(int fd, off_t offset, int whence, struct file_table* ft, off_t* ret
 	return err;
 }
 
+int ft_close(int fd, struct file_table *ft, int *retval)
+{
+	KASSERT(retval != NULL);
+	KASSERT(ft != NULL);
+	int err = 0;
+	struct file_handle *fh;
+	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
+
+	//Checks for valid fd. Note that fd's 0, 1, and 2 ARE ALLOWED.
+	int num = array_num(ft->file_handle_arr);
+	if(fd < 0 || fd >= num)
+	{
+		err = EBADF;
+		*retval = -1;
+		return err;	
+	}
+
+	//Remove the handle from the file table.
+	array_remove(ft->file_handle_arr, fd);
+
+	//If the file handle is NOT being used by any other processes, then destroy it.
+	fh->ref_count--;
+	if(fh->ref_count == 0)
+	{
+		fh_destroy(fh);
+	}
+
+	return err;
+}
 
 /* File Handle function definitions */
 
@@ -572,7 +607,7 @@ struct file_handle* fh_create(const char* file_name)
 	fh->vnode = NULL;
 	fh->offset = 0;
 	fh->flags = 0;
-	fh->ref_count = 1;
+	fh->ref_count = 0;//Number of processes using this file handle.
 	
 	return fh;
 }
@@ -590,18 +625,21 @@ void fh_destroy(struct file_handle *fh)
 	return;
 }
 
-int fh_open(const char* file, int flags, struct file_handle* fh)
+int fh_open(const char *file, int flags, mode_t mode, struct file_handle *fh)
 {
 	char *dup_fname = kstrdup(file);
 	//strcpy(dup_fname, file);
 	int err;
-	err = vfs_open(dup_fname, flags, 0664, &fh->vnode);
-	if(err)
+	//0664 implies write permission, but that probably shouldn't ALWAYS go there...
+	//Instead, perhaps mode_t should be passed in, since sys_open takes that anyway.
+	err = vfs_open(dup_fname, flags, mode, &fh->vnode);
+	if(err)//vfs_open should return 0 unless there was an error.
 	{
 		kprintf("Inside fh_open: Error while opening file: %s with flag %d\n", file, flags);
 		return err;
 	}
 	fh->flags = flags;
+	fh->ref_count++;//This should also be incremented with sys_fork.
 	return 0;
 
 }
@@ -624,7 +662,7 @@ int fh_write(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 	}
 	uio_uinit(&iov, &uio, buff, bufflen, fh->offset, UIO_WRITE);
 	err = VOP_WRITE(fh->vnode, &uio);
-	if(err)
+	if(err)//VOP_WRITE always returns zero unless there was an error.
 	{
 		*retval = err;
 		return err;

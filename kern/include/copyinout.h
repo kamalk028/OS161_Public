@@ -29,7 +29,7 @@
 
 #ifndef _COPYINOUT_H_
 #define _COPYINOUT_H_
-
+#include <types.h>
 
 /*
  * copyin/copyout/copyinstr/copyoutstr are standard BSD kernel functions.

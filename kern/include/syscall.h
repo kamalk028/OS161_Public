@@ -47,8 +47,11 @@ void syscall(struct trapframe *tf);
    after submitting 2.1: 
    Pl leave the comment, so it would be nice. 
 
-	UPDATE: It is much simpler to leave them here, actually.
+	UPDATE: They have been moved to file_syscalls.h
 */
+
+//int sys_open(const char *filename, int flags, mode_t mode);
+//int sys_write(int fd, const void* buff, size_t bufflen, int* retval);
 
 /*
  * Support functions.
