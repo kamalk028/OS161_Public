@@ -56,6 +56,14 @@ sys_open(const_userptr_t filename, int flags, mode_t mode, int *retval)
 
 }
 
+int sys_close(int fd, int *ret)
+{
+	*ret = 0;
+	KASSERT(curproc != NULL);
+	KASSERT(curproc->ft != NULL);
+	return ft_close(fd, curproc->ft, ret);
+}
+
 int sys_write(int fd, void *buff, size_t len, int *ret)
 {
 	*ret = 0;

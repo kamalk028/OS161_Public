@@ -457,7 +457,7 @@ int ft_write(int fd, void *buff, size_t bufflen, struct file_table *ft, int *ret
 	if(fd < 0 || fd >= num)
 	{
 		err = EBADF;
-		*retval = EBADF;
+		*retval = -1;
 		return err;	
 	}
 
@@ -467,7 +467,7 @@ int ft_write(int fd, void *buff, size_t bufflen, struct file_table *ft, int *ret
 	{
 		kprintf("fhandle is null for the fd .... \n");
 		err = EBADF;
-		*retval = -1;//Based on man pages, this should return -1, not the errcode.
+		*retval = -1;//Based on man pages, retval should return -1, not the errcode.
 		return err;
 	}
 	
@@ -494,6 +494,35 @@ int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int
 	return err;
 }
 
+int ft_close(int fd, struct file_table *ft, int *retval)
+{
+	KASSERT(retval != NULL);
+	KASSERT(ft != NULL);
+	int err = 0;
+	struct file_handle *fh;
+	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
+
+	//Checks for valid fd. Note that fd's 0, 1, and 2 ARE ALLOWED.
+	int num = array_num(ft->file_handle_arr);
+	if(fd < 0 || fd >= num)
+	{
+		err = EBADF;
+		*retval = -1;
+		return err;	
+	}
+
+	//Remove the handle from the file table.
+	array_remove(ft->file_handle_arr, fd);
+
+	//If the file handle is NOT being used by any other processes, then destroy it.
+	fh->ref_count--;
+	if(fh->ref_count == 0)
+	{
+		fh_destroy(fh);
+	}
+
+	return err;
+}
 
 /* File Handle function definitions */
 
@@ -518,7 +547,7 @@ struct file_handle* fh_create(const char* file_name)
 	fh->vnode = NULL;
 	fh->offset = 0;
 	fh->flags = 0;
-	fh->ref_count = 1;
+	fh->ref_count = 0;//Number of processes using this file handle.
 	
 	return fh;
 }
@@ -550,6 +579,7 @@ int fh_open(const char *file, int flags, mode_t mode, struct file_handle *fh)
 		return err;
 	}
 	fh->flags = flags;
+	fh->ref_count++;//This should also be incremented with sys_fork.
 	return 0;
 
 }
