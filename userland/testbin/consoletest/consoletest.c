@@ -70,11 +70,6 @@ init_random() {
 	srandom((unsigned long)ms);
 }
 
-/*int main()
-{
-	printf("Something to print to the console ... \n");
-	return 0;
-}*/
 int
 main(int argc, char **argv)
 {

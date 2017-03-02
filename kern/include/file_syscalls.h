@@ -6,6 +6,11 @@
 
 int sys_open(const char *filename, int flags, mode_t mode, int* retval);
 int sys_write(int fd, void* buff, size_t len, int* ret);
+int sys_read(int fd, void* buff, size_t len, int* ret);
+int sys_lseek(int fd, off_t offset, int whence, off_t* ret);
+uint64_t to64(uint32_t high, uint32_t low);
+uint32_t high32(uint64_t value);
+uint32_t low32(uint64_t value);
 
 
 //#endif

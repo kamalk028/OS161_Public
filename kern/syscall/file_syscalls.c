@@ -48,7 +48,40 @@ int sys_write(int fd, void* buff, size_t len, int* ret)
 	return ft_write(fd, buff, len, ft, ret);
 }
 
+int sys_read(int fd, void* buff, size_t len, int* ret)
+{
+	*ret = 0;
+	struct file_table *ft;
+	KASSERT(curproc != NULL);
+	ft = curproc->ft;
+	KASSERT(ft != NULL);
+	return ft_read(fd, buff, len, ft, ret);
+}
 
+int sys_lseek(int fd, off_t offset, int whence, off_t* ret)
+{
+	*ret = 0;
+	int err = 0;
+	struct file_table *ft;
+	ft = curproc->ft;
+	err = ft_lseek(fd, offset, whence, ft, ret);
+	return err;
+}
+
+uint64_t to64(uint32_t high, uint32_t low)
+{
+	return (uint64_t) high << 32 | low;
+}
+
+uint32_t high32(uint64_t value)
+{
+	return value >> 32;
+}
+
+uint32_t low32(uint64_t value)
+{
+	return value;
+}
 
 //HERE IS THE START OF A sys_open FUNCTION I WAS GONNA WRITE!
 /*int
