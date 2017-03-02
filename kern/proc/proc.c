@@ -53,6 +53,7 @@
 #include <lib.h>
 #include <uio.h>
 #include <fs.h>
+#include <kern/errno.h>
 
 
 /*
@@ -130,10 +131,9 @@ proc_create(const char *name)
 	/* VFS fields */
 	proc->p_cwd = NULL;
 
-	/*Process File Table
-	proc->proc_ftable = ft_create(proc->p_name)
-	//Will do ft_init() as part of ft_create.
-	*/
+	
+	proc->ft = ft_create(proc->p_name);
+
 	return proc;
 }
 
@@ -263,14 +263,6 @@ proc_create_runprogram(const char *name)
 	  Should change after submission
 	 */
 	ft_init(newproc->ft);
-	/*char fname[30];
-	strcpy(fname, "con:");
-	int err;
-	err = vfs_open(fname, O_WRONLY, 0664, &newproc->vn);	
-	if(err)
-	{
-		kprintf("Could not open %s for write: %s\n", fname, strerror(err));
-	}*/
 
 	/* VM fields */
 
@@ -391,9 +383,7 @@ proc_setas(struct addrspace *newas)
 	return oldas;
 }
 
-/*
-   Implementing functions involving File Table (file_table) 
-*/
+/* File Table function definitions */
 
 struct file_table* ft_create (const char *name)
 {
@@ -417,7 +407,6 @@ struct file_table* ft_create (const char *name)
 		return NULL;
 	}
 	array_init(ft->file_handle_arr);
-	//ft_init(ft);
 	ft->proc = NULL;
 	return ft;
 }
@@ -429,12 +418,12 @@ void ft_init(struct file_table* ft)
 	struct file_handle* fh_write;
 	fh_read = fh_create("con:");
 	fh_write = fh_create("con:");
-	//fh_open("con:", O_RDONLY, fh_read);
+	fh_open("con:", O_RDONLY, fh_read);
 	fh_open("con:", O_WRONLY, fh_write);
 	unsigned idx;
 	array_add(ft->file_handle_arr, fh_read, &idx);
 	array_add(ft->file_handle_arr, fh_write, &idx);
-//	array_add(ft->file_handle_arr, fh_write, &idx);
+	array_add(ft->file_handle_arr, fh_write, &idx);
 	return;
 }
 
@@ -443,6 +432,7 @@ void ft_destroy(struct file_table *ft)
 	KASSERT(ft != NULL);
 	ft->proc = NULL;
 	kfree(ft->proc_name);
+	/* Should we call fh_destroy, if there are any file handles in the array */
 	array_cleanup(ft->file_handle_arr);
 	kfree(ft->file_handle_arr);
 	kfree(ft);
@@ -454,61 +444,52 @@ struct file_table* get_curproc_ft()
 	return curthread->t_proc->ft;
 }
 
-int ft_write(int fd, void* buff, size_t bufflen, struct file_table *ft)
+int ft_write(int fd, void* buff, size_t bufflen, struct file_table *ft, int* retval)
 {
-	//Currently, this is called immidiately within the SYS_write case in syscall.c
-	//We need to implement the actual sys_write function properly.
-	//This has no error handling.
-	struct file_handle *fh;
-	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
-
+	KASSERT(buff != NULL);
+	KASSERT(ft != NULL);
+	KASSERT(retval != NULL);
 	int err;
 	err = 0;
-	if(fd!=1)
+	int num = array_num(ft->file_handle_arr);
+	if(fd < 0 || fd >= num)
 	{
-		char* dup_fname = kstrdup(fh->file_name);
-		err = fh_open(dup_fname, O_WRONLY, fh);
+		err = EBADF;
+		*retval = EBADF;
+		return err;	
 	}
-	if(err)
+	struct file_handle *fh;
+	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
+	if(fh == NULL)
 	{
-		//kprintf("Error occurred while opening con: for writing. FROM: ft_write\n");
-	}
-	err=fh_write(buff, bufflen, fh);
-	if(err)
-	{
-	return err;
-	}
-	//kprintf("Buff len returned: %d\n", err);
-	/*if(err)
-	{
-		kprintf("Error occurred while writing to file: %s\n", fh->file_name);
+		kprintf("fhandle is null for the fd .... \n");
+		err = EBADF;
+		*retval = EBADF;
 		return err;
-	}*/
-	return 0;
+	}
+	
+	err=fh_write(buff, bufflen, fh, retval);
+	return err;
 }
 
 int ft_open(const char *file, int flags, struct file_table *ft)
 {
 	unsigned idx;
-	idx = 0; //You need to double check this: initialising because of a compile error
+	idx = 0; //Initialising because of a compile time error
 	struct file_handle* fh;
 	fh = fh_create(file);
 	int err;
 	err = fh_open(file,flags,fh);
 	if(err)
 	{
-		//kprintf("Error occurred while opening file: %s in mode: %d\n", file, flags);
 		return err;
 	}
-
 	array_add(ft->file_handle_arr, fh, &idx);
 	return idx;
 }
 
 
-/*
-   Implementing functions involving File Handle (file_handle)
- */
+/* File Handle function definitions */
 
 struct file_handle* fh_create(const char* file_name)
 {
@@ -527,10 +508,11 @@ struct file_handle* fh_create(const char* file_name)
 		return NULL;
 	}
 
+	spinlock_init(&fh->fh_splk);
 	fh->vnode = NULL;
 	fh->offset = 0;
-	spinlock_init(&fh->fh_splk);
 	fh->flags = 0;
+	fh->ref_count = 1;
 	
 	return fh;
 }
@@ -542,6 +524,7 @@ void fh_destroy(struct file_handle *fh)
 	fh->vnode = NULL;
 	fh->flags = 0;
 	fh->offset = 0;
+	fh->ref_count = 0;
 	kfree(fh->file_name);
 	kfree(fh);
 	return;
@@ -549,36 +532,50 @@ void fh_destroy(struct file_handle *fh)
 
 int fh_open(const char* file, int flags, struct file_handle* fh)
 {
-	char dup_fname[16];
-	strcpy(dup_fname, file);
+	char *dup_fname = kstrdup(file);
+	//strcpy(dup_fname, file);
 	int err;
 	err = vfs_open(dup_fname, flags, 0664, &fh->vnode);
 	if(err)
 	{
-	//	kprintf("Error while trying to open file: %s, with flag: %d\n", file, flags);
+		kprintf("Inside fh_open: Error while opening file: %s with flag %d\n", file, flags);
 		return err;
 	}
+	fh->flags = flags;
 	return 0;
 
 }
 
 
-int fh_write(void* buff, size_t bufflen, struct file_handle* fh)
+int fh_write(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 {
+	KASSERT(fh != NULL);
+	int err;
+	err = 0;
 	struct iovec iov;
 	struct uio uio;
+	if(!(fh->flags & O_WRONLY || fh->flags & O_RDWR))
+	{
+		kprintf("The file %s is not open for write purpose: \n", fh->file_name);
+		kprintf("It is open in flag: %d\n",fh->flags);
+		err = -1;
+		*retval = EBADF;
+		return err;
+	}
 	uio_uinit(&iov, &uio, buff, bufflen, fh->offset, UIO_WRITE);
-	int err;
 	err = VOP_WRITE(fh->vnode, &uio);
 	if(err)
 	{
-		//kprintf("Error while trying to write to file: %s\n",fh->file_name);
+		*retval = err;
 		return err;
 	}
-	/* you should calculate offset
-	   check if all the bytes are written
-	   give out appropriate error codes.
+	/*
+	 *  Getting offset and bytes written from uio
+	 *  Please make sure if getting offset and res_id like this is okay 
 	 */
-	//vfs_close(fh->vnode);
-	return 0;
+	spinlock_acquire(&fh->fh_splk);
+	fh->offset = uio.uio_offset;
+	*retval = uio.uio_resid;
+	spinlock_release(&fh->fh_splk);
+	return err;
 }

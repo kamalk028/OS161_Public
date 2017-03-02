@@ -49,8 +49,6 @@ void syscall(struct trapframe *tf);
 
 	UPDATE: It is much simpler to leave them here, actually.
 */
-//int sys_open(const char *filename, int flags, mode_t mode);
-//int sys_write(int fd, const void* buff, size_t bufflen, int* retval);
 
 /*
  * Support functions.

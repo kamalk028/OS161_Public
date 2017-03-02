@@ -118,19 +118,11 @@ syscall(struct trapframe *tf)
 		* We should make the function call.
 		* Small note: originally used &tf->tf_a0 as first arg.
 		* */
-		err = sys_open((char *)tf->tf_a0, tf->tf_a1, (mode_t)tf->tf_a2);
-		/*
-		   if the retval is not one of the error code then set err=0;
-		   else set err=retval
-		   If this part of the code can do that then
-		   either return value or the error code is gonna go inside v0
-		 */
+		err = sys_open((char *)tf->tf_a0, tf->tf_a1, (mode_t)tf->tf_a2, &retval);
 		break;
 
 	    case SYS_write:
-		//kprintf("inside syscall: mycode gets called.. \n");
-		//err = write(tf->tf_a0, (void *)tf->tf_a1, tf->tf_a2, &retval);
-		err = ft_write(tf->tf_a0, (void *)tf->tf_a1, tf->tf_a2, get_curproc_ft());
+		err = sys_write(tf->tf_a0, (void *)tf->tf_a1, (size_t)tf->tf_a2, &retval);
 		break;
 
 	    /* Add stuff here */
