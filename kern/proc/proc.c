@@ -673,7 +673,7 @@ int fh_write(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 	 */
 	spinlock_acquire(&fh->fh_splk);
 	fh->offset = uio.uio_offset;
-	*retval = uio.uio_resid;
+	*retval = bufflen - uio.uio_resid;
 	spinlock_release(&fh->fh_splk);
 	return err;
 }
@@ -685,7 +685,7 @@ int fh_read(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 	err = 0;
 	struct iovec iov;
 	struct uio uio;
-	if(!(fh->flags & O_RDONLY || fh->flags & O_RDWR))
+	if(!(fh->flags == O_RDONLY || fh->flags & O_RDWR))
 	{
 		kprintf("The file %s is not open for read purpose: \n",fh->file_name);
 		kprintf("It is open in flag: %d\n", fh->flags);
@@ -702,7 +702,7 @@ int fh_read(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 	}
 	spinlock_acquire(&fh->fh_splk);
 	fh->offset = uio.uio_offset;
-	*retval = uio.uio_resid;
+	*retval = bufflen - uio.uio_resid;
 	spinlock_release(&fh->fh_splk);
 	return err;
 }
@@ -729,7 +729,7 @@ int fh_lseek(off_t offset, int whence, struct file_handle *fh, off_t *retval)
 		case SEEK_END: ;
 			struct stat st;
 			VOP_STAT(fh->vnode, &st);
-			new_offset = st.st_size;
+			new_offset = st.st_size + offset;
 			break;
 		default:
 			err = EINVAL;
