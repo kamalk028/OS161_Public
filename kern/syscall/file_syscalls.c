@@ -84,88 +84,38 @@ int sys_write(int fd, void *buff, size_t len, int *ret)
 	return ft_write(fd, buff, len, ft, ret);
 }
 
-
-
-//HERE IS THE START OF A sys_open FUNCTION I WAS GONNA WRITE!
-/*int
-sys_open(const char *filename, int flags, mode_t mode)
+int sys_read(int fd, void* buff, size_t len, int* ret)
 {
-	int file_handle;
-	//WARNING!! Process file table not yet implemented. FILLER CODE!
-	file_handle = ft_open(filename, flags, curthread->t_proc->proc_ftable);
+	*ret = 0;
+	struct file_table *ft;
+	KASSERT(curproc != NULL);
+	ft = curproc->ft;
+	KASSERT(ft != NULL);
+	return ft_read(fd, buff, len, ft, ret);
+}
 
-	//fh_open not written yet, either!
-	file_handle = fh_open(filename, flags)
-
-	//This is called by fh_open, not by sys_open.
-	//vfs_open(path, flags, vnode);
-
-	//Actually, vfs_open already has these cases for flags written.
-	//NONE OF THIS WILL EVER BE NEEDED HERE!
-	switch (flags) {
-	    case O_RDONLY:
-		//Open the file for reading only...
-		break;
-	    case O_WRONLY:
-		//Open the file for writing only...
-		break;
-	    case O_RDWR:
-		//Open the file for reading and writing.
-		//There may be more cases than this.
-		break;
-	
-	return file_handle;
-}*/
-
-/*int 
-sys_write(int fd, const void* buff, size_t bufflen, int* retval)
+int sys_lseek(int fd, off_t offset, int whence, off_t* ret)
 {
-	(void) fd;
-	struct vnode *vnode;
-	struct iovec iov;
-	struct uio ku;
-	int err=0;
-	//int flags;
-	off_t pos=0;
-	char *fname;
-	//char *dup_fname;
-	//dup_fname=kstrdup("con:");
-	struct proc* process;
-	process = curthread->t_proc;
-	vnode=process->vn;
-	fname=kstrdup("con:");
-	//dup
+	*ret = 0;
+	int err = 0;
+	struct file_table *ft;
+	ft = curproc->ft;
+	err = ft_lseek(fd, offset, whence, ft, ret);
+	return err;
+}
 
-	//flags=O_WRONLY;
-	if(fd == 0)
-	{
-		fname=kstrdup("con:");
-		flags=O_WRONLY;//STDIN;
-	}
-	else if(fd == 1)
-	{
-		fname=kstrdup("con:");
-		flags=O_WRONLY;
-	}
-	else if(fd == 2)
-	{
-		fname=kstrdup("con:");
-		flags=O_WRONLY;
-	}
-	else
-	{
-		kprintf("fd > 2, we have not implemented it yet");
-		return -1;
-	}*/
-	//err = vfs_open(dup_fname, flags, 0664, &vn);
-	//kprintf("vfs_open has worked, the return int is %d\n", err);
-/*	if(err)
-	{
-		kprintf("Could not open %s for write: %s\n", fname, strerror(err));
-		return -1;
-	}
-	uio_kinit(&iov, &ku,(void *) buff, bufflen, pos, UIO_WRITE);
-	err = VOP_WRITE(vnode, &ku);
-	if(err)
-	{*/
+uint64_t to64(uint32_t high, uint32_t low)
+{
+	return (uint64_t) high << 32 | low;
+}
+
+uint32_t high32(uint64_t value)
+{
+	return value >> 32;
+}
+
+uint32_t low32(uint64_t value)
+{
+	return value;
+}
 

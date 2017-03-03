@@ -41,6 +41,7 @@
 #include <kern/fcntl.h>
 #include <proc.h>
 #include <file_syscalls.h>
+#include <copyinout.h>
 
 /*
  * System call dispatcher.
@@ -86,6 +87,7 @@ syscall(struct trapframe *tf)
 	int callno;
 	int32_t retval;
 	int err;
+	off_t ret_offset;
 
 	KASSERT(curthread != NULL);
 	KASSERT(curthread->t_curspl == 0);
@@ -103,6 +105,7 @@ syscall(struct trapframe *tf)
 	 */
 
 	retval = 0;
+	ret_offset = 0;
 
 	switch (callno) {
 	    case SYS_reboot:
@@ -136,6 +139,22 @@ syscall(struct trapframe *tf)
 		err = sys_write(tf->tf_a0, (void *)tf->tf_a1, (size_t)tf->tf_a2, &retval);
 		break;
 
+	    case SYS_read:
+		err = sys_read(tf->tf_a0, (void *)tf->tf_a1, (size_t) tf->tf_a2, &retval);
+		break;
+
+	    case SYS_lseek: ;
+		int fd = tf->tf_a0;
+		uint32_t offset_h32 = tf->tf_a2;
+		uint32_t offset_l32 = tf->tf_a3;
+		off_t offset = (off_t) to64(offset_h32, offset_l32);
+		int whence;
+		copyin((userptr_t) tf->tf_sp + 16, &whence, sizeof(whence));	
+		err = sys_lseek(fd, offset, whence, &ret_offset);
+		break;
+
+	    /* Add stuff here */
+
 	    default:
 		kprintf("Unknown syscall %d\n", callno);
 		err = ENOSYS;
@@ -154,7 +173,15 @@ syscall(struct trapframe *tf)
 	}
 	else {
 		/* Success. */
-		tf->tf_v0 = retval;
+		if(callno == SYS_lseek)
+		{
+			tf->tf_v0 = high32(ret_offset);
+			tf->tf_v1 = low32(ret_offset);
+		}
+		else
+		{
+			tf->tf_v0 = retval;
+		}
 		tf->tf_a3 = 0;      /* signal no error */
 	}
 

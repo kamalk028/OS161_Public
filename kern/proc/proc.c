@@ -54,6 +54,8 @@
 #include <uio.h>
 #include <fs.h>
 #include <kern/errno.h>
+#include <kern/seek.h>
+#include <kern/stat.h>
 
 
 /*
@@ -445,6 +447,26 @@ struct file_table *get_curproc_ft()
 	return curthread->t_proc->ft;
 }
 
+bool is_valid_fd(int fd, struct file_table *ft)
+{
+	bool result = true;
+	int num = array_num(ft->file_handle_arr);                                  
+	if(fd < 0 || fd >= num)
+	{
+		result = false;
+	}
+	else
+	{
+		struct file_handle* fh;
+		fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
+		if(fh == NULL)
+		{
+			result = false;
+		}
+	}
+	return result;
+}
+
 int ft_write(int fd, void *buff, size_t bufflen, struct file_table *ft, int *retval)
 {
 	KASSERT(buff != NULL);
@@ -458,7 +480,7 @@ int ft_write(int fd, void *buff, size_t bufflen, struct file_table *ft, int *ret
 	if(fd < 0 || fd >= num)
 	{
 		err = EBADF;
-		*retval = -1;
+		*retval = EBADF;
 		return err;	
 	}
 
@@ -468,13 +490,33 @@ int ft_write(int fd, void *buff, size_t bufflen, struct file_table *ft, int *ret
 	{
 		kprintf("fhandle is null for the fd .... \n");
 		err = EBADF;
-		*retval = -1;//Based on man pages, retval should return -1, not the errcode.
+		*retval = EBADF;
 		return err;
 	}
 	
 	err=fh_write(buff, bufflen, fh, retval);
 	return err;
 }
+
+int ft_read(int fd, void* buff, size_t bufflen, struct file_table* ft, int* retval)
+{
+	KASSERT(buff != NULL);
+	KASSERT(ft != NULL);
+	KASSERT(retval != NULL);
+	int err;
+	err = 0;
+	if(!is_valid_fd(fd, ft))
+	{
+		err = EBADF;
+		*retval = EBADF;
+		return err;
+	}
+	struct file_handle *fh;
+	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
+	err = fh_read(buff, bufflen, fh, retval);
+	return err;
+}
+
 
 int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int *retval)
 {
@@ -487,7 +529,7 @@ int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int
 	//err will now hold 0 unless fh_open failed.
 	if(err)
 	{
-		*retval = -1;
+		*retval = -1; //This is not correct
 		return err;
 	}
 	
@@ -511,6 +553,24 @@ int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int
 		array_add(ft->file_handle_arr, fh, &idx);
 	}
 	*retval = idx;
+	return err;
+}
+
+int ft_lseek(int fd, off_t offset, int whence, struct file_table* ft, off_t* retval)
+{
+	KASSERT(ft != NULL);
+	KASSERT(retval != NULL);
+	int err;
+	err = 0;
+	if(!is_valid_fd(fd, ft))
+	{
+		err = EBADF;
+		*retval = EBADF;
+		return err;
+	}
+	struct file_handle *fh;
+	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
+	err = fh_lseek(offset, whence, fh, retval);
 	return err;
 }
 
@@ -650,13 +710,13 @@ int fh_write(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 	{
 		kprintf("The file %s is not open for write purpose: \n", fh->file_name);
 		kprintf("It is open in flag: %d\n",fh->flags);
-		err = -1;
+		err = EBADF;
 		*retval = EBADF;
 		return err;
 	}
 	uio_uinit(&iov, &uio, buff, bufflen, fh->offset, UIO_WRITE);
 	err = VOP_WRITE(fh->vnode, &uio);
-	if(err)//ASSUMPTION: VOP_WRITE always returns zero unless there was an error.
+	if(err)//VOP_WRITE always returns zero unless there was an error.
 	{
 		*retval = err;
 		return err;
@@ -667,7 +727,85 @@ int fh_write(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 	 */
 	spinlock_acquire(&fh->fh_splk);
 	fh->offset = uio.uio_offset;
-	*retval = uio.uio_resid;
+	*retval = bufflen - uio.uio_resid;
+	spinlock_release(&fh->fh_splk);
+	return err;
+}
+
+int fh_read(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
+{
+	KASSERT(fh != NULL);
+	int err;
+	err = 0;
+	struct iovec iov;
+	struct uio uio;
+	if(!(fh->flags == O_RDONLY || fh->flags & O_RDWR))
+	{
+		kprintf("The file %s is not open for read purpose: \n",fh->file_name);
+		kprintf("It is open in flag: %d\n", fh->flags);
+		err = EBADF;
+		*retval = EBADF;
+		return err;
+	}
+	uio_uinit(&iov, &uio, buff, bufflen, fh->offset, UIO_READ);
+	err = VOP_READ(fh->vnode, &uio);
+	if(err)
+	{
+		*retval = err;
+		return err;
+	}
+	spinlock_acquire(&fh->fh_splk);
+	fh->offset = uio.uio_offset;
+	*retval = bufflen - uio.uio_resid;
+	spinlock_release(&fh->fh_splk);
+	return err;
+}
+
+int fh_lseek(off_t offset, int whence, struct file_handle *fh, off_t *retval)
+{
+	int err = 0;
+	if(!strcmp(fh->file_name, "con:"))
+	{
+		err = ESPIPE;
+		*retval = ESPIPE;
+		return err;
+	}
+	off_t new_offset;
+	switch(whence)
+	{
+		case SEEK_SET:
+			new_offset = offset;
+			break;
+		case SEEK_CUR:
+			spinlock_acquire(&fh->fh_splk);
+			new_offset = fh->offset + offset;
+			break;
+		case SEEK_END: ;
+			struct stat st;
+			VOP_STAT(fh->vnode, &st);
+			new_offset = st.st_size + offset;
+			break;
+		default:
+			err = EINVAL;
+			*retval = EINVAL;
+			return err;
+	}
+	if(new_offset < 0)
+	{
+		if(spinlock_do_i_hold(&fh->fh_splk))
+		{
+			spinlock_release(&fh->fh_splk);
+		}
+		err = EINVAL;
+		*retval = EINVAL;
+		return err;
+	}
+	if(!spinlock_do_i_hold(&fh->fh_splk))
+	{
+		spinlock_acquire(&fh->fh_splk);
+	}
+	fh->offset = new_offset;
+	*retval = fh->offset;
 	spinlock_release(&fh->fh_splk);
 	return err;
 }
