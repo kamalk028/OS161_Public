@@ -146,6 +146,7 @@ proc_create(const char *name)
 void
 proc_destroy(struct proc *proc)
 {
+	//By the way, WTH HAPPENED TO THE COMMENT HERE?!
 	/*
 	 * You probably want to destroy and null out much of the
 	 * process (particularly the address space) at exit time if
@@ -453,7 +454,7 @@ int ft_write(int fd, void *buff, size_t bufflen, struct file_table *ft, int *ret
 	err = 0;
 
 	//Checks for valid fd.
-	int num = array_num(ft->file_handle_arr);
+	int num = array_num(ft->file_handle_arr);//ASSUMPTION: array_num still counts if an element == NULL.
 	if(fd < 0 || fd >= num)
 	{
 		err = EBADF;
@@ -489,7 +490,26 @@ int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int
 		*retval = -1;
 		return err;
 	}
-	array_add(ft->file_handle_arr, fh, &idx);//ASSUMPTION: array_add fills in first available index.
+	
+	//New file handle is added to first element of file_handle_arr which contains NULL.
+	//  If none are found, then the array is expanded.
+	unsigned int i;
+	bool null_found = false;
+	for(i = 0; i < array_num(ft->file_handle_arr); i++)
+	{
+		if(array_get(ft->file_handle_arr, i) == NULL){
+			idx = i;
+			null_found = true;
+		}
+	}
+	if(null_found)
+	{
+		array_set(ft->file_handle_arr, idx, fh);
+	}
+	else
+	{
+		array_add(ft->file_handle_arr, fh, &idx);
+	}
 	*retval = idx;
 	return err;
 }
@@ -512,7 +532,9 @@ int ft_close(int fd, struct file_table *ft, int *retval)
 	}
 
 	//Remove the handle from the file table.
-	array_remove(ft->file_handle_arr, fd);
+	//NOTE: array_remove is not used because it can automatically shift items downward.
+	//  We do not want open fh's having their fd's inadvertently modified.
+	array_set(ft->file_handle_arr, fd, NULL);
 
 	//If the file handle is NOT being used by any other processes, then destroy it.
 	fh->ref_count--;
@@ -521,6 +543,38 @@ int ft_close(int fd, struct file_table *ft, int *retval)
 		fh_destroy(fh);
 	}
 
+	return err;
+}
+
+int ft_copy(int oldfd, int newfd, struct file_table *ft, int *retval)
+{
+	KASSERT(retval != NULL);
+	KASSERT(ft != NULL);
+	int err = 0;
+	struct file_handle *fh;
+	fh = (struct file_handle*) array_get(ft->file_handle_arr, oldfd);
+
+	//Do the usual checl for valid fd.
+	int num = array_num(ft->file_handle_arr);
+	if(oldfd < 0 || oldfd >= num)
+	{
+		err = EBADF;
+		*retval = -1;
+		return err;	
+	}
+	//CHECK FOR A fh IN newfd BEFOREHAND! (Only neccesary b/c fh may need to be destroyed.)
+	if(((unsigned int)newfd < array_num(ft->file_handle_arr)) && (array_get(ft->file_handle_arr, newfd) != NULL))
+	{
+		err = ft_close(newfd, ft, retval);
+	}
+
+	//Add the file handle to the ft. It is intentionally the exact same file handle.
+	array_set(ft->file_handle_arr, newfd, fh);
+	fh->ref_count++;
+	*retval = newfd; //Man pages say to do this if no errors occurred.
+	if(err){
+		*retval = -1;
+	}
 	return err;
 }
 
