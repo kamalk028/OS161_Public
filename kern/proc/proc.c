@@ -59,40 +59,6 @@
 
 
 /*
- *Here are the remnants of my unfinished attempt at initializing file table.
- */
-/*struct file_table *
-ft_create(const char *name)
-{
-	struct file_table *file_table;
-	int i = 0;
-
-	file_table = kmalloc(sizeof(*file_table));
-	if (file_table == NULL) {
-		return NULL;
-
-	//We are giving the ft the process' name.
-	file_table->proc_name = kstrdup(name);
-	if (file_table->proc_name == NULL) {
-		kfree(file_table);
-		return NULL;
-
-	//Array holding pointers to file handles.
-	//Exactly 64 elements at the recommendation of Geoffery.
-	for(i=0; i<63; i++)
-	{
-		file_table->file_handle_arr[i] = kmalloc(sizeof(struct file_handle));
-	}
-
-	//Track the process which created this file table. (WILL NEED TO BE CHANGED WHEN FORK IS IMPLEMENTED!)
-	file_table->proc = curthread->t_proc;
-
-	//Next step is to fill the first three elements of file_handle_arr.
-	file_table->file_handle_arr[0] =
-}*/
-
-
-/*
  * The process for the kernel; this holds all the kernel-only threads.
  */
 struct proc *kproc;
@@ -133,6 +99,11 @@ proc_create(const char *name)
 	/* VFS fields */
 	proc->p_cwd = NULL;
 
+	/* New stuff for multiplexing. */
+	proc->pid = 2;//CHANGE THIS SO THAT ALL PROCESSES GET A DIFFERENT PID!!
+	proc->ppid = NULL;//ONLY THE FIRST PROCESS SHOULD HAVE NULL FOR THIS! OTHERS GET curproc->pid!!
+	proc->exit_status = 0;//We'll say 0 for not exited, 1 for exited.
+	proc->exit_code = NULL;//Filled in with random 32-bit integer when process exits.
 	
 	proc->ft = ft_create(proc->p_name);
 
@@ -251,7 +222,7 @@ proc_bootstrap(void)
  * process's (that is, the kernel menu's) current directory.
  */
 struct proc *
-proc_create_runprogram(const char *name)
+proc_create_runprogram(const char *name)//fork() currently takes no name arg.
 {
 	struct proc *newproc;
 
@@ -260,11 +231,7 @@ proc_create_runprogram(const char *name)
 		return NULL;
 	}
 
-	/**
-	  Initialise console in write mode
-	  Just to pass 2.1
-	  Should change after submission
-	 */
+	/* Initialise console. */
 	ft_init(newproc->ft);
 
 	/* VM fields */
@@ -410,7 +377,7 @@ struct file_table* ft_create (const char *name)
 		return NULL;
 	}
 	array_init(ft->file_handle_arr);
-	ft->proc = NULL;
+	ft->proc = NULL;//This should probably hold curproc's PID!!
 	return ft;
 }
 
@@ -435,7 +402,18 @@ void ft_destroy(struct file_table *ft)
 	KASSERT(ft != NULL);
 	ft->proc = NULL;
 	kfree(ft->proc_name);
-	/* Should we call fh_destroy, if there are any file handles in the array */
+	//Update ref_count of any fh's still left in the array.
+	//  Destroy them if they are not needed.
+	unsigned int = 0;
+	for (i = 0; i < array_num(ft->file_handle_arr); i++)
+	{
+		if(array_get(ft->file_handle_arr, i) != NULL){
+			array_get(ft->file_handle_arr)->ref_count--;
+			if(array_get(ft->file_handle_arr)->ref_count == 0){
+				fh_destroy(array_get(ft->file_handle_arr));
+			}
+		}
+	}//Apologies for the sloppiness.
 	array_cleanup(ft->file_handle_arr);
 	kfree(ft->file_handle_arr);
 	kfree(ft);
@@ -636,6 +614,44 @@ int ft_copy(int oldfd, int newfd, struct file_table *ft, int *retval)
 		*retval = -1;
 	}
 	return err;
+}
+
+//Copy all elements of a file table from src to dest. For use in sys_fork().
+struct file_table* ft_copy_all(struct file_table *src, const char *child_name)
+{
+	struct file_table* dest;
+	dest = kmalloc(sizeof(*dest));
+	if(dest == NULL)
+	{
+		return NULL;
+	}
+	dest->proc_name = kstrdup(child_name);
+	if(dest->proc_name == NULL)
+	{
+		kfree(dest);
+		return NULL;
+	}
+	dest->file_handle_arr = array_create();
+	if(dest->file_handle_arr == NULL)
+	{
+		kfree(dest->proc_name);
+		kfree(dest);
+		return NULL;
+	}
+	array_init(dest->file_handle_arr);
+	dest->proc = NULL;//REMEMBER TO CHANGE THIS TO CHLID PID!!
+	
+	//Actually begin copying.
+	unsigned int i = 0;
+	unsigned int filler = 0;//To avoid passing i as reference and non-reference (shouldn't matter).
+	for (i = 0, i < array_num(src->file_handle_arr), i++)
+	{
+		array_add(dest->file_handle_arr, array_get(src->file_handle_arr, i), &filler);
+		//Update each fh's ref_count as you go. NOT CERTAIN THIS SYNTAX WORKS!!
+		array_get(dest->file_handle_arr, i)->ref_count++;
+	}
+	
+	return dest;
 }
 
 /* File Handle function definitions */

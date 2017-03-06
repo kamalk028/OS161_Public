@@ -59,6 +59,7 @@ int ft_read(int fd, void* buff, size_t bufflen, struct file_table* ft, int* retv
 int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int *retval);
 int ft_close(int fd, struct file_table *ft, int *retval);
 int ft_copy(int oldfd, int newfd, struct file_table *ft, int *retval);
+struct file_table* ft_copy_all(struct file_table* src, const char *child_name);
 int ft_lseek(int fd, off_t offset, int whence, struct file_table* ft, off_t *retval);
 
 /*File Handle Declaration*/
@@ -100,13 +101,17 @@ struct proc {
 	char *p_name;			/* Name of this process */
 	struct spinlock p_lock;		/* Lock for this structure */
 	unsigned p_numthreads;		/* Number of threads in this process */
+	unsigned int pid;
+	unsigned int ppid;		/* Parent process ID. Should be NULL for init. */
+	int exit_status;		/* 0 while process is active, 1 while it has exited. */
+	int exit_code;			/* Starts as NULL, filled in with random number when process exits. */
 
 	/* VM */
 	struct addrspace *p_addrspace;	/* virtual address space */
 
 	/* VFS */
 	struct vnode *p_cwd;		/* current working directory */
-	struct file_table *ft;
+	struct file_table *ft;		/* Process' own file table */
 
 		/* add more material here as needed */
 };
