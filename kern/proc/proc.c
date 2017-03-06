@@ -63,6 +63,28 @@
  */
 struct proc *kproc;
 
+/* User process table. Can only be accessed in proc.c */
+/*static struct proc_table *pt_create()
+{
+	static struct proc_table *pt;
+	pt = kmalloc(sizeof(*pt));
+	if (pt == NULL){
+		kprintf("Not enough memory for user proc table!!");
+		return NULL;
+	pt->proc_arr = array_create();
+	array_set(pt->proc_arr, 0, NULL);
+	array_set(pt->proc_arr, 1, NULL);//Minimum PID is 2.
+
+	return pt;
+}*/
+
+/* User process table. Can only be accessed in proc.c */
+/*static struct proc_table *pt;
+pt->proc_arr = array_create();
+array_set(pt->proc_arr, 0, NULL);
+array_set(pt->proc_arr, 1, NULL);//Minimum PID is 2.*/
+
+
 /*
  * Create a proc structure.
  */
@@ -101,10 +123,10 @@ proc_create(const char *name)
 
 	/* New stuff for multiplexing. */
 	proc->pid = 2;//CHANGE THIS SO THAT ALL PROCESSES GET A DIFFERENT PID!!
-	proc->ppid = NULL;//ONLY THE FIRST PROCESS SHOULD HAVE NULL FOR THIS! OTHERS GET curproc->pid!!
+	proc->ppid = 0;//ONLY THE FIRST PROCESS SHOULD HAVE 0 FOR THIS! OTHERS GET curproc->pid!!
 	proc->exit_status = 0;//We'll say 0 for not exited, 1 for exited.
-	proc->exit_code = NULL;//Filled in with random 32-bit integer when process exits.
-	
+	proc->exit_code = 0;//Filled in with random 32-bit integer when process exits.
+
 	proc->ft = ft_create(proc->p_name);
 
 	return proc;
@@ -251,6 +273,9 @@ proc_create_runprogram(const char *name)//fork() currently takes no name arg.
 		newproc->p_cwd = curproc->p_cwd;
 	}
 	spinlock_release(&curproc->p_lock);
+
+	/* Update the process table and assign PID. NOTE: Recycling pid's not yet implemented.*/
+	//array_add(pt->proc_arr, (void *)name, &(newproc->pid));//THE void* TYPE CAST MAY CAUSE PROBLEMS!
 
 	return newproc;
 }
@@ -404,13 +429,15 @@ void ft_destroy(struct file_table *ft)
 	kfree(ft->proc_name);
 	//Update ref_count of any fh's still left in the array.
 	//  Destroy them if they are not needed.
-	unsigned int = 0;
+	unsigned int i = 0;
+	struct file_handle* fh;
 	for (i = 0; i < array_num(ft->file_handle_arr); i++)
 	{
 		if(array_get(ft->file_handle_arr, i) != NULL){
-			array_get(ft->file_handle_arr)->ref_count--;
-			if(array_get(ft->file_handle_arr)->ref_count == 0){
-				fh_destroy(array_get(ft->file_handle_arr));
+			fh = (struct file_handle*) array_get(ft->file_handle_arr, i);
+			fh->ref_count--;
+			if(fh->ref_count == 0){
+				fh_destroy(fh);
 			}
 		}
 	}//Apologies for the sloppiness.
@@ -640,17 +667,19 @@ struct file_table* ft_copy_all(struct file_table *src, const char *child_name)
 	}
 	array_init(dest->file_handle_arr);
 	dest->proc = NULL;//REMEMBER TO CHANGE THIS TO CHLID PID!!
-	
+
 	//Actually begin copying.
 	unsigned int i = 0;
 	unsigned int filler = 0;//To avoid passing i as reference and non-reference (shouldn't matter).
-	for (i = 0, i < array_num(src->file_handle_arr), i++)
+	struct file_handle *fh;
+	for (i = 0; i < array_num(src->file_handle_arr); i++)
 	{
 		array_add(dest->file_handle_arr, array_get(src->file_handle_arr, i), &filler);
-		//Update each fh's ref_count as you go. NOT CERTAIN THIS SYNTAX WORKS!!
-		array_get(dest->file_handle_arr, i)->ref_count++;
+		//Update each fh's ref_count as you go.
+		fh = array_get(dest->file_handle_arr, i);
+		fh->ref_count++;
 	}
-	
+
 	return dest;
 }
 

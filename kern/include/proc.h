@@ -41,7 +41,16 @@
 struct addrspace;
 struct thread;
 struct vnode;
- 
+
+/*Process Table Definition*/
+/*struct proc_table {//This may take too much memory. Check available kernel space on boot.
+	struct array *proc_arr;//Start filling at index 2, and try to make slots recyclable.
+	//pid for each process is same as index in table.
+};*/
+//static struct proc_table *pt_create();
+//void pt_add(const char *name);
+//void pt_remove(const char *name);//Note: Call with waitpid(), NOT _exit().
+
 /*File Table Declaration*/
 struct file_table {
 	char *proc_name;
@@ -68,7 +77,7 @@ struct file_handle {
 	struct vnode *vnode;
 	off_t offset;
 	struct spinlock fh_splk;
-	int ref_count; 
+	int ref_count;//Tracks number of fd's which point to this fh.
 	int flags;
 };
 
