@@ -42,6 +42,7 @@
  * process that will have more than one thread is the kernel process.
  */
 
+#define MAX_PROC 4000//Max number of entries in proc table.
 #include <types.h>
 #include <spl.h>
 #include <proc.h>
@@ -79,11 +80,10 @@ struct proc *kproc;
 }*/
 
 /* User process table. Can only be accessed in proc.c */
-/*static struct proc_table *pt;
-pt->proc_arr = array_create();
-array_set(pt->proc_arr, 0, NULL);
-array_set(pt->proc_arr, 1, NULL);//Minimum PID is 2.*/
-
+struct proc_table pt[MAX_PROC] = { { NULL } };
+static int next_pid = 2;
+//Next_pid should be incremented when new procs are added.
+//You can acces element n of the array with pt[n].proc
 
 /*
  * Create a proc structure.
@@ -122,7 +122,7 @@ proc_create(const char *name)
 	proc->p_cwd = NULL;
 
 	/* New stuff for multiplexing. */
-	proc->pid = 2;//CHANGE THIS SO THAT ALL PROCESSES GET A DIFFERENT PID!!
+	//proc->pid = 2;//PID SHOULD BE ASSIGNED AFTER PLACEMENT ON proc_table.
 	proc->ppid = 0;//ONLY THE FIRST PROCESS SHOULD HAVE 0 FOR THIS! OTHERS GET curproc->pid!!
 	proc->exit_status = 0;//We'll say 0 for not exited, 1 for exited.
 	proc->exit_code = 0;//Filled in with random 32-bit integer when process exits.
@@ -275,7 +275,9 @@ proc_create_runprogram(const char *name)//fork() currently takes no name arg.
 	spinlock_release(&curproc->p_lock);
 
 	/* Update the process table and assign PID. NOTE: Recycling pid's not yet implemented.*/
-	//array_add(pt->proc_arr, (void *)name, &(newproc->pid));//THE void* TYPE CAST MAY CAUSE PROBLEMS!
+	pt[next_pid].proc = newproc;//Firat PID is 2. Other PIDs will depend on first available index.
+	newproc->pid = next_pid;
+	next_pid++;
 
 	return newproc;
 }

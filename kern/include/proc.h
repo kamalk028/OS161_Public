@@ -43,10 +43,12 @@ struct thread;
 struct vnode;
 
 /*Process Table Definition*/
-/*struct proc_table {//This may take too much memory. Check available kernel space on boot.
-	struct array *proc_arr;//Start filling at index 2, and try to make slots recyclable.
+struct proc_table {
+	struct proc *proc;
+	//Array should be non-dynamic for memory conservation.
 	//pid for each process is same as index in table.
-};*/
+	//Currently, the array is declared in proc.c
+};
 //static struct proc_table *pt_create();
 //void pt_add(const char *name);
 //void pt_remove(const char *name);//Note: Call with waitpid(), NOT _exit().
