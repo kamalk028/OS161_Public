@@ -123,7 +123,6 @@ proc_create(const char *name)
 
 	/* New stuff for multiplexing. */
 	//proc->pid = 2;//PID SHOULD BE ASSIGNED AFTER PLACEMENT ON proc_table.
-	proc->ppid = 0;//ONLY THE FIRST PROCESS SHOULD HAVE 0 FOR THIS! OTHERS GET curproc->pid!!
 	proc->exit_status = 0;//We'll say 0 for not exited, 1 for exited.
 	proc->exit_code = 0;//Filled in with random 32-bit integer when process exits.
 
@@ -244,7 +243,7 @@ proc_bootstrap(void)
  * process's (that is, the kernel menu's) current directory.
  */
 struct proc *
-proc_create_runprogram(const char *name)//fork() currently takes no name arg.
+proc_create_runprogram(const char *name)
 {
 	struct proc *newproc;
 
@@ -275,8 +274,52 @@ proc_create_runprogram(const char *name)//fork() currently takes no name arg.
 	spinlock_release(&curproc->p_lock);
 
 	/* Update the process table and assign PID. NOTE: Recycling pid's not yet implemented.*/
-	pt[next_pid].proc = newproc;//Firat PID is 2. Other PIDs will depend on first available index.
+	pt[next_pid].proc = newproc;//Firat PID is 2. 
+	//Other PIDs will depend on next index (held by next_pid).
+	newproc->ppid = 0;//ONLY THE FIRST PROCESS SHOULD HAVE 0 FOR THIS! OTHERS GET curproc->pid!!
 	newproc->pid = next_pid;
+	next_pid++;
+
+	return newproc;
+}
+
+//This is to be called by sys_fork(). This is similar to proc_create_runprogram, but
+//  it does not initialize the console, and it copies the old process' ft. 
+struct proc *
+proc_fork_runprogram(const char *name)//fork() currently takes no name arg.
+{
+	//Note that, at this point in the code, there is still only one process
+	//  in control. thread_fork() will be called inside sys_fork().
+	struct proc *newproc;
+
+	//MAY NEED TO COPY TRAPFRAME!!
+
+	newproc = proc_create(name);
+	if (newproc == NULL) {
+		return NULL;
+	}
+
+	/* VM fields */
+	newproc->p_addrspace = NULL;
+
+	/*VFS Feilds*/
+	/*
+	 * Lock the current process to copy its current directory.
+	 */
+	spinlock_acquire(&curproc->p_lock);
+	if (curproc->p_cwd != NULL) {
+		VOP_INCREF(curproc->p_cwd);
+		newproc->p_cwd = curproc->p_cwd;
+	}
+	spinlock_release(&curproc->p_lock);
+
+	/*Copy the parent's file table.*/
+	newproc->ft = ft_copy_all(curproc->ft, name);
+
+	/* Update the process table and assign PID. NOTE: Recycling pid's not yet implemented.*/
+	pt[next_pid].proc = newproc;//First PID for this function should be 3.
+	newproc->pid = next_pid;
+	newproc->ppid = curproc->pid;//curproc is the parent proc.
 	next_pid++;
 
 	return newproc;

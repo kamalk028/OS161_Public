@@ -136,6 +136,9 @@ void proc_bootstrap(void);
 /* Create a fresh process for use by runprogram(). */
 struct proc *proc_create_runprogram(const char *name);
 
+/* NEW: Set up a new process for sys_fork(). */
+struct proc *proc_fork_runprogram(const char *name);
+
 /* Destroy a process. */
 void proc_destroy(struct proc *proc);
 
