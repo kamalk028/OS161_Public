@@ -498,7 +498,13 @@ void ft_destroy(struct file_table *ft)
 			}
 		}
 	}//Apologies for the sloppiness.
-	array_cleanup(ft->file_handle_arr);
+
+	//Now, all elements of the array must be emptied so that it can be destroyed.
+	while(array_num(ft->file_handle_arr) != 0)
+	{
+		array_remove(ft->file_handle_arr, 0);
+	}
+	array_destroy(ft->file_handle_arr);//This requires an array to be empty.
 	kfree(ft->file_handle_arr);
 	kfree(ft);
 	return;

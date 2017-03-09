@@ -113,7 +113,7 @@ struct proc {
 	unsigned p_numthreads;		/* Number of threads in this process */
 	unsigned int pid;
 	unsigned int ppid;		/* Parent process ID. Should be NULL for init. */
-	uint32_t child_exit_status;	/* Can be filled in by sys_waitpid after child has exited. */
+	int child_exit_status;	/* Can be filled in by sys_waitpid after child has exited. */
 	int exit_code;			/* Starts as 0, filled in with user's value before process exits. */
 
 	/* VM */

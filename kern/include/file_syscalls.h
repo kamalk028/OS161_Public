@@ -19,6 +19,6 @@ uint32_t low32(uint64_t value);
 int sys_getpid(int *ret);
 int sys_fork(int *ret);
 int sys_waitpid(int pid, int *status, int options, int *ret);
-
+void sys__exit(int exitcode);
 
 //#endif

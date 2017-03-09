@@ -232,7 +232,7 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	}
 	else if (child->exit_code == 0)//case of __WEXITED
 	{
-		*status = _MKWAIT_EXIT(0);
+		*status = (int) _MKWAIT_EXIT(0);
 		curproc->child_exit_status = *status;
 	}
 	//Add the other two or three cases here.
@@ -248,6 +248,39 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 
 	*ret = pid;
 	return 0;
+}
+
+void sys__exit(int exitcode)
+{
+	if (parent_cv_lock == NULL)
+	{
+		parent_cv = cv_create("parent_cv");
+		parent_cv_lock = lock_create("parent_cv_lock");
+	}
+
+	curproc->exit_code = exitcode;
+
+	if ((curproc->ppid == 0) || (get_proc(curproc->ppid) == NULL)){
+		//If this process has no parent, just destroy it.
+		pt_remove(curproc->pid);
+		proc_destroy(curproc);
+	}
+
+	struct cv *execution_chamber;
+	struct lock *chamber_lock;
+	chamber_lock = lock_create("chamber_lock");
+	execution_chamber = cv_create("execution_chamber");
+
+	//This will breifly wake all parents waiting in waitpid.
+	//  But, they will only continue if their child now has an exit code.
+	cv_broadcast(parent_cv, parent_cv_lock);
+
+	//Now, the child will wait until its parent has generated its exit status.
+	//  Once that happens, the child will be destroyed.
+	cv_wait(execution_chamber, chamber_lock);
+
+	//No thread should ever reach this point.
+	kprintf("A thread somehow escaped the execution chamber!!");
 }
 
 uint64_t to64(uint32_t high, uint32_t low)
