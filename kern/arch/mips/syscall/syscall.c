@@ -41,6 +41,7 @@
 #include <kern/fcntl.h>
 #include <proc.h>
 #include <file_syscalls.h>
+//#include <proc_syscalls.h>
 #include <copyinout.h>
 
 /*
@@ -151,6 +152,10 @@ syscall(struct trapframe *tf)
 		int whence;
 		copyin((userptr_t) tf->tf_sp + 16, &whence, sizeof(whence));	
 		err = sys_lseek(fd, offset, whence, &ret_offset);
+		break;
+
+	    case SYS_fork:
+		err = sys_fork(&retval);
 		break;
 
 	    /* Add stuff here */

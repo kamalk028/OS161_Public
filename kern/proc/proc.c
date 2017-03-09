@@ -81,7 +81,7 @@ struct proc *kproc;
 
 /* User process table. Can only be accessed in proc.c */
 struct proc_table pt[MAX_PROC] = { { NULL } };
-static int next_pid = 2;
+static unsigned int next_pid = 2;
 //Next_pid should be incremented when new procs are added.
 //You can acces element n of the array with pt[n].proc
 
@@ -722,7 +722,9 @@ struct file_table* ft_copy_all(struct file_table *src, const char *child_name)
 		array_add(dest->file_handle_arr, array_get(src->file_handle_arr, i), &filler);
 		//Update each fh's ref_count as you go.
 		fh = array_get(dest->file_handle_arr, i);
-		fh->ref_count++;
+		if (fh != NULL){
+			fh->ref_count++;
+		}
 	}
 
 	return dest;

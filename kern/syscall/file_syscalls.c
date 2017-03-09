@@ -35,7 +35,7 @@ sys_open(const_userptr_t filename, int flags, mode_t mode, int *retval)
 	int copyerr;
 	size_t actualSizeRead = 0;
 	size_t len = 500;
-	copyerr = copyinstr(filename, kname, len, &actualSizeRead);//TEMPORARY: Passing in 64 for filename size.
+	copyerr = copyinstr(filename, kname, len, &actualSizeRead);
 	if(copyerr)
 	{
 		kprintf("Error copying filename!");
@@ -102,6 +102,43 @@ int sys_lseek(int fd, off_t offset, int whence, off_t* ret)
 	ft = curproc->ft;
 	err = ft_lseek(fd, offset, whence, ft, ret);
 	return err;
+}
+
+//forktest calls waitpid, so I have to write my own test, or finish that syscall first.
+int
+sys_fork(int *ret)
+{
+	KASSERT(curproc != NULL);
+	KASSERT(curproc->ft != NULL);
+
+	char name[16] = "fillername";
+	struct proc *newproc;
+	int result;
+	unsigned int parent_pid = curproc->pid;
+	newproc = proc_fork_runprogram(name);
+
+	//NOTE: Args 3, 4, and 5 most likely should be changed.
+	result = thread_fork(name, newproc, NULL, NULL, 0);
+	if (result){
+		kprintf("Thread fork failed!");
+		return -1;
+	}
+
+	//At this point, there should be two processes...
+	if (curproc->pid == parent_pid){
+		*ret = newproc->pid;
+		return 0;
+	}
+	else if(curproc->pid == newproc->pid){
+		*ret = 0;
+		return 0;
+	}
+	else {
+		kprintf("What kind of monster did you produce?!");
+		*ret = 0;
+		return 0;//I would make this return an error, but newproc->pid may be modified by thread_fork().
+			//This could be normal behaviour. I just want to know if that happens.
+	}
 }
 
 uint64_t to64(uint32_t high, uint32_t low)
