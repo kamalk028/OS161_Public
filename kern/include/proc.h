@@ -49,9 +49,8 @@ struct proc_table {
 	//pid for each process is same as index in table.
 	//Currently, the array is declared in proc.c
 };
-//static struct proc_table *pt_create();
-//void pt_add(const char *name);
-//void pt_remove(const char *name);//Note: Call with waitpid(), NOT _exit().
+struct proc *get_proc(int pid);
+void pt_remove(int pid);
 
 /*File Table Declaration*/
 struct file_table {
@@ -114,8 +113,8 @@ struct proc {
 	unsigned p_numthreads;		/* Number of threads in this process */
 	unsigned int pid;
 	unsigned int ppid;		/* Parent process ID. Should be NULL for init. */
-	int exit_status;		/* 0 while process is active, 1 while it has exited. */
-	int exit_code;			/* Starts as NULL, filled in with random number when process exits. */
+	uint32_t child_exit_status;	/* Can be filled in by sys_waitpid after child has exited. */
+	int exit_code;			/* Starts as 0, filled in with user's value before process exits. */
 
 	/* VM */
 	struct addrspace *p_addrspace;	/* virtual address space */

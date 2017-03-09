@@ -57,33 +57,36 @@
 #include <kern/errno.h>
 #include <kern/seek.h>
 #include <kern/stat.h>
-
+#include <synch.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
  */
 struct proc *kproc;
 
-/* User process table. Can only be accessed in proc.c */
-/*static struct proc_table *pt_create()
-{
-	static struct proc_table *pt;
-	pt = kmalloc(sizeof(*pt));
-	if (pt == NULL){
-		kprintf("Not enough memory for user proc table!!");
-		return NULL;
-	pt->proc_arr = array_create();
-	array_set(pt->proc_arr, 0, NULL);
-	array_set(pt->proc_arr, 1, NULL);//Minimum PID is 2.
-
-	return pt;
-}*/
-
-/* User process table. Can only be accessed in proc.c */
-struct proc_table pt[MAX_PROC] = { { NULL } };
+/*
+ * User process table. Can only be accessed in proc.c
+ */
+static struct proc_table pt[MAX_PROC] = { { NULL } };
 static unsigned int next_pid = 2;
+static struct lock *pt_lock;
 //Next_pid should be incremented when new procs are added.
 //You can acces element n of the array with pt[n].proc
+
+//Give the process table a pid, and it'll give you the pointer to the proc.
+struct proc *
+get_proc(int pid)
+{
+	return pt[pid].proc;
+}
+
+void
+pt_remove(int pid)
+{
+	pt[pid].proc = NULL;
+	//Code can be added here if we implement recycling pid's.
+	return;
+}
 
 /*
  * Create a proc structure.
@@ -123,8 +126,8 @@ proc_create(const char *name)
 
 	/* New stuff for multiplexing. */
 	//proc->pid = 2;//PID SHOULD BE ASSIGNED AFTER PLACEMENT ON proc_table.
-	proc->exit_status = 0;//We'll say 0 for not exited, 1 for exited.
-	proc->exit_code = 0;//Filled in with random 32-bit integer when process exits.
+	proc->child_exit_status = 0;//Returned by waitpid() after child exits.
+	proc->exit_code = 4;//User provides a value here before process exits.
 
 	proc->ft = ft_create(proc->p_name);
 
@@ -221,6 +224,8 @@ proc_destroy(struct proc *proc)
 
 	//kfree(proc->vn);
 	kfree(proc->p_name);
+	//kfree(proc->child_exit_status);
+	//kfree(proc->exit_code);
 	kfree(proc);
 }
 
@@ -273,6 +278,9 @@ proc_create_runprogram(const char *name)
 	}
 	spinlock_release(&curproc->p_lock);
 
+	//This lock will be used by fork runprogram.
+	pt_lock = lock_create("pt_lock");
+
 	/* Update the process table and assign PID. NOTE: Recycling pid's not yet implemented.*/
 	pt[next_pid].proc = newproc;//Firat PID is 2. 
 	//Other PIDs will depend on next index (held by next_pid).
@@ -317,10 +325,14 @@ proc_fork_runprogram(const char *name)//fork() currently takes no name arg.
 	newproc->ft = ft_copy_all(curproc->ft, name);
 
 	/* Update the process table and assign PID. NOTE: Recycling pid's not yet implemented.*/
+	lock_acquire(pt_lock);
+
 	pt[next_pid].proc = newproc;//First PID for this function should be 3.
 	newproc->pid = next_pid;
 	newproc->ppid = curproc->pid;//curproc is the parent proc.
 	next_pid++;
+
+	lock_release(pt_lock);
 
 	return newproc;
 }
