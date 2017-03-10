@@ -71,6 +71,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	 * Write this.
 	 */
 
+
 	(void)old;
 
 	*ret = newas;

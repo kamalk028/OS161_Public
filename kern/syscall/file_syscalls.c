@@ -20,6 +20,7 @@
 #include <proc.h>
 #include <thread.h>
 #include <current.h>
+#include <mips/trapframe.h>
 //#include <synch.h>
 //May need more synch primitives.
 
@@ -111,14 +112,16 @@ sys_fork(int *ret)
 	KASSERT(curproc != NULL);
 	KASSERT(curproc->ft != NULL);
 
-	char name[16] = "fillername";
+	char name[16] = "fillername"; //we can have a name like curproc->filename+"child"
 	struct proc *newproc;
 	int result;
 	unsigned int parent_pid = curproc->pid;
 	newproc = proc_fork_runprogram(name);
 
 	//NOTE: Args 3, 4, and 5 most likely should be changed.
-	result = thread_fork(name, newproc, NULL, NULL, 0);
+	struct trapframe *tf;
+	tf = newproc->tframe;
+	result = thread_fork(name, newproc, enter_forked_process, tf, 0);
 	if (result){
 		kprintf("Thread fork failed!");
 		return -1;
