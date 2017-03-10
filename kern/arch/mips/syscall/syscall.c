@@ -156,9 +156,20 @@ syscall(struct trapframe *tf)
 		err = sys_lseek(fd, offset, whence, &ret_offset);
 		break;
 
+	    case SYS_getpid:
+		err = sys_getpid(&retval);
+		break;
+
 	    case SYS_fork:
 		err = sys_fork(&retval);
 		break;
+
+	    case SYS_waitpid:
+		err = sys_waitpid(tf->tf_a0, (int *)&tf->tf_a1, tf->tf_a2, &retval);
+		break;
+
+	    case SYS__exit:
+		sys__exit(tf->tf_a0);//No threads should ever pass this.
 
 	    /* Add stuff here */
 

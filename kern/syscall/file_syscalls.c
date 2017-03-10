@@ -21,8 +21,11 @@
 #include <thread.h>
 #include <current.h>
 #include <mips/trapframe.h>
-//#include <synch.h>
-//May need more synch primitives.
+#include <kern/wait.h>
+#include <synch.h>
+
+static struct cv *parent_cv;
+static struct lock *parent_cv_lock;
 
 int
 sys_open(const_userptr_t filename, int flags, mode_t mode, int *retval)
@@ -105,6 +108,13 @@ int sys_lseek(int fd, off_t offset, int whence, off_t* ret)
 	return err;
 }
 
+int
+sys_getpid(int *ret)//Still assumes pid's are integers.
+{
+	*ret = curproc->pid;
+	return 0;
+}
+
 //forktest calls waitpid, so I have to write my own test, or finish that syscall first.
 int
 sys_fork(int *ret)
@@ -112,16 +122,14 @@ sys_fork(int *ret)
 	KASSERT(curproc != NULL);
 	KASSERT(curproc->ft != NULL);
 
-	char name[16] = "fillername"; //we can have a name like curproc->filename+"child"
+	char name[16] = "fillername";
 	struct proc *newproc;
 	int result;
 	unsigned int parent_pid = curproc->pid;
 	newproc = proc_fork_runprogram(name);
 
 	//NOTE: Args 3, 4, and 5 most likely should be changed.
-	struct trapframe *tf;
-	tf = newproc->tframe;
-	result = thread_fork(name, newproc, enter_forked_process, tf, 0);
+	result = thread_fork(name, newproc, NULL, NULL, 0);
 	if (result){
 		kprintf("Thread fork failed!");
 		return -1;
@@ -142,6 +150,138 @@ sys_fork(int *ret)
 		return 0;//I would make this return an error, but newproc->pid may be modified by thread_fork().
 			//This could be normal behaviour. I just want to know if that happens.
 	}
+}
+
+//Apparently, pid's should have their own type called pid_t.
+//  I'm gonna see if I can just use integers.
+//  Type casting will take place in syscall.c
+int
+sys_waitpid(int pid, int *status, int options, int *ret)
+{
+	if (parent_cv_lock == NULL)
+	{
+		parent_cv = cv_create("parent_cv");
+		parent_cv_lock = lock_create("parent_cv_lock");
+	}
+	//pid represents the process we'll wait for to exit.
+	//  Only parents of exiting children should ever call
+	//  this function.
+	//  Anything else, return error ECHILD. (Or, for a non-
+	//  existent process, return ESRCH.)
+	//status will get an encoded exit status assigned to it
+	//  once the process exits (or if it has already exited).
+	//  Unless status is passed in as NULL, in which case do
+	//  not do anything to it.
+	//  Passed in status value otherwise doesn't matter.
+	//  The exit code used to calculate this value comes
+	//  from the user space code.
+	//options should always just be 0. Just assert that
+	//  it is the only value ever passed in (unless you
+	//  wanna implement more options). err = EINVAL.
+
+	//When a parent calls this function on its child, the
+	//  child can be totally removed from the process table.
+	//When a parent exits, then the child should just go
+	//  straight off the proc_table right when it exits.
+	//  (that'll get handled in sys__exit)
+
+	//BIGGEST HURDLE: understanding for certain how to get
+	//  the various signals a process can have upon death.
+
+	//On success, this function returns the pid of the exited
+	//  child (which is the pid passed in).
+
+	struct proc *child;
+	child = get_proc(pid);
+
+	if (options != 0)
+	{
+		return EINVAL;
+	}
+
+	if (child == NULL)
+	{
+		return ESRCH;
+	}
+	else if (child->ppid != curproc->pid)
+	{
+		return ECHILD;
+	}
+
+	//Waiting processes should go into a wait channel or cv,
+	//  then get pulled out when their children exit.
+	//  Problem with cv: must only signal the correct
+	//  process when multiple parents are waiting...
+	//  Could place cv_wait in a while loop, then make
+	//  sys_exit use cv_broadcast... (smart idea)
+	//Here's an issue: the child can exit by calling
+	//  sys__exit, OR by recieving a fatal signal. I am
+	//  not sure how to get that signal number, but when you
+	//  figure it out, && it to this while condition.
+	//For now, I'm assuming it'll all go to proc->exit_code.
+	while(child->exit_code == 4)//Apparently, 0-3 are reserved.
+	{
+		cv_wait(parent_cv, parent_cv_lock);
+	}
+
+	//Here is where the exit status is generated, based on the
+	//  exit code that child now has, or the signal if the child
+	//  was killed by a fatal signal or something.
+	if (status == NULL)
+	{
+		;//We do not want to change status in this case.
+	}
+	else if (child->exit_code == 0)//case of __WEXITED
+	{
+		*status = (int) _MKWAIT_EXIT(0);
+		curproc->child_exit_status = *status;
+	}
+	//Add the other two or three cases here.
+	//Not sure how to handle __WSTOPPED...
+
+	//Remove the child process from the process table.
+	pt_remove(child->pid);
+
+	//Destroy the child process.
+	//  It is safe to do this now because only the child's
+	//  parent must call waitpid.
+	proc_destroy(child);
+
+	*ret = pid;
+	return 0;
+}
+
+void sys__exit(int exitcode)
+{
+	if (parent_cv_lock == NULL)
+	{
+		parent_cv = cv_create("parent_cv");
+		parent_cv_lock = lock_create("parent_cv_lock");
+	}
+
+	curproc->exit_code = exitcode;
+
+	if ((curproc->ppid == 0) || (get_proc(curproc->ppid) == NULL)){
+		//If this process has no parent, just destroy it.
+		pt_remove(curproc->pid);
+		proc_destroy(curproc);
+	}
+
+	struct cv *execution_chamber;
+	struct lock *chamber_lock;
+	chamber_lock = lock_create("chamber_lock");
+	execution_chamber = cv_create("execution_chamber");
+
+	//This will breifly wake all parents waiting in waitpid.
+	//  But, they will only continue if their child now has an exit code.
+	cv_broadcast(parent_cv, parent_cv_lock);
+
+	//Now, the child will wait until its parent has generated its exit status.
+	//  Once that happens, the child will be destroyed.
+	cv_wait(execution_chamber, chamber_lock);
+
+	//No thread should ever reach this point.
+	kprintf("A thread somehow escaped the execution chamber!!");
 }
 
 uint64_t to64(uint32_t high, uint32_t low)
