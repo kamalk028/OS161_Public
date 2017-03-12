@@ -94,7 +94,8 @@ syscall(struct trapframe *tf)
 	KASSERT(curthread->t_curspl == 0);
 	KASSERT(curthread->t_iplhigh_count == 0);
 
-	copy_trapframe(tf, curproc->tframe);
+	//copy_trapframe(tf, curproc->tframe);
+	memcpy(curproc->tframe, tf, sizeof(struct trapframe));
 
 	callno = tf->tf_v0;
 
@@ -224,5 +225,6 @@ struct trapframe *tf = (struct trapframe *) i_tf;
 tf->tf_v0 = idx;
 tf->tf_a3 = 0;
 tf->tf_epc += 4;
+
 mips_usermode(tf);
 }
