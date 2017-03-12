@@ -116,6 +116,13 @@ proc_create(const char *name)
 		kfree(proc);
 		return NULL;
 	}
+	proc->tframe = kmalloc(sizeof(struct trapframe));
+	if(proc->tframe == NULL)
+	{
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
 
 	proc->p_numthreads = 0;
 	spinlock_init(&proc->p_lock);
@@ -134,7 +141,7 @@ proc_create(const char *name)
 	proc->exit_status = 0;//Returned by waitpid() after child exits.
 	proc->exit_code = 4;//User provides a value here before process exits.
 
-	proc->ft = ft_create(proc->p_name);
+//	proc->ft = ft_create(proc->p_name);
 
 	return proc;
 }
