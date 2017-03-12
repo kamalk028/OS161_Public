@@ -20,6 +20,7 @@
 #include <proc.h>
 #include <thread.h>
 #include <current.h>
+#include <mips/trapframe.h>
 #include <kern/wait.h>
 #include <synch.h>
 

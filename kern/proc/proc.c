@@ -57,7 +57,9 @@
 #include <kern/errno.h>
 #include <kern/seek.h>
 #include <kern/stat.h>
+#include <mips/trapframe.h>
 #include <synch.h>
+
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -316,6 +318,19 @@ proc_fork_runprogram(const char *name)//fork() currently takes no name arg.
 	/* VM fields */
 	newproc->p_addrspace = NULL;
 
+	//spinlock_acquire(&curproc->p_lock);
+	as_copy(curproc->p_addrspace, &newproc->p_addrspace);
+	//spinlock_release(&curproc->p_lock);
+
+	if(newproc->p_addrspace == NULL)
+	{
+		kprintf("I THINK SYSFORK FAILED: p_addrspace for the new proc is null even after calling as_copy:::");
+	}
+
+	//spinlock_acquire(&curproc->p_lock);
+//	copy_trapframe(curproc->tframe, newproc->tframe);
+	memcpy(newproc->tframe, curproc->tframe, sizeof(struct trapframe));
+	//spinlock_release(&curproc->p_lock);
 	/*VFS Feilds*/
 	/*
 	 * Lock the current process to copy its current directory.
@@ -331,14 +346,10 @@ proc_fork_runprogram(const char *name)//fork() currently takes no name arg.
 	newproc->ft = ft_copy_all(curproc->ft, name);
 
 	/* Update the process table and assign PID. NOTE: Recycling pid's not yet implemented.*/
-	lock_acquire(pt_lock);
-
 	pt[next_pid].proc = newproc;//First PID for this function should be 3.
 	newproc->pid = next_pid;
 	newproc->ppid = curproc->pid;//curproc is the parent proc.
 	next_pid++;
-
-	lock_release(pt_lock);
 
 	return newproc;
 }
@@ -924,4 +935,48 @@ int fh_lseek(off_t offset, int whence, struct file_handle *fh, off_t *retval)
 	*retval = fh->offset;
 	spinlock_release(&fh->fh_splk);
 	return err;
+}
+
+/*
+Function copies all the members of the src_tf to dest_tf:
+*/
+void copy_trapframe(struct trapframe *src_tf, struct trapframe *dest_tf)
+{
+	KASSERT(src_tf != NULL);
+	KASSERT(dest_tf != NULL);
+	dest_tf->tf_vaddr = src_tf->tf_vaddr;
+	dest_tf->tf_status = src_tf->tf_status;
+	dest_tf->tf_cause = src_tf->tf_cause;
+	dest_tf->tf_lo = src_tf->tf_lo;
+	dest_tf->tf_hi = src_tf->tf_hi;
+	dest_tf->tf_ra = src_tf->tf_ra;
+	dest_tf->tf_at = src_tf->tf_at;
+	dest_tf->tf_v0 = src_tf->tf_v0;
+	dest_tf->tf_v1 = src_tf->tf_v1;
+	dest_tf->tf_a0 = src_tf->tf_a0;
+	dest_tf->tf_a1 = src_tf->tf_a1;
+	dest_tf->tf_a2 = src_tf->tf_a2;
+	dest_tf->tf_a3 = src_tf->tf_a3;
+	dest_tf->tf_t0 = src_tf->tf_t0;
+	dest_tf->tf_t1 = src_tf->tf_t1;
+	dest_tf->tf_t2 = src_tf->tf_t2;
+	dest_tf->tf_t3 = src_tf->tf_t3;
+	dest_tf->tf_t4 = src_tf->tf_t4;
+	dest_tf->tf_t5 = src_tf->tf_t5;
+	dest_tf->tf_t6 = src_tf->tf_t6;
+	dest_tf->tf_t7 = src_tf->tf_t7;
+	dest_tf->tf_s0 = src_tf->tf_s0;
+	dest_tf->tf_s1 = src_tf->tf_s1;
+	dest_tf->tf_s2 = src_tf->tf_s2;
+	dest_tf->tf_s3 = src_tf->tf_s3;
+	dest_tf->tf_s4 = src_tf->tf_s4;
+	dest_tf->tf_s5 = src_tf->tf_s5;
+	dest_tf->tf_s6 = src_tf->tf_s6;
+	dest_tf->tf_s7 = src_tf->tf_s7;
+	dest_tf->tf_t8 = src_tf->tf_t8;
+	dest_tf->tf_t9 = src_tf->tf_t9;
+	dest_tf->tf_gp = src_tf->tf_gp;
+	//dest_tf->tf_sp = src_tf->tf_sp;
+	dest_tf->tf_s8 = src_tf->tf_s8;
+	dest_tf->tf_epc = src_tf->tf_epc;
 }

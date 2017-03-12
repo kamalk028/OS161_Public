@@ -122,6 +122,7 @@ struct proc {
 	/* VFS */
 	struct vnode *p_cwd;		/* current working directory */
 	struct file_table *ft;		/* Process' own file table */
+	struct trapframe *tframe;
 
 		/* add more material here as needed */
 };
@@ -152,6 +153,9 @@ struct addrspace *proc_getas(void);
 
 /* Change the address space of the current process, and return the old one. */
 struct addrspace *proc_setas(struct addrspace *);
+
+/* Copy trapframe declaration */
+void copy_trapframe(struct trapframe *, struct trapframe *);
 
 
 #endif /* _PROC_H_ */
