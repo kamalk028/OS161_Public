@@ -42,7 +42,7 @@
  * process that will have more than one thread is the kernel process.
  */
 
-#define MAX_PROC 4000//Max number of entries in proc table.
+#define MAX_PROC 1000//Max number of entries in proc table.
 #include <types.h>
 #include <spl.h>
 #include <proc.h>
@@ -126,7 +126,10 @@ proc_create(const char *name)
 
 	/* New stuff for multiplexing. */
 	//proc->pid = 2;//PID SHOULD BE ASSIGNED AFTER PLACEMENT ON proc_table.
-	proc->child_exit_status = 0;//Returned by waitpid() after child exits.
+
+	//NOTE: Changed exit_status to reflect own process instead of child.
+	//  That is because a process can have more than one child!
+	proc->exit_status = 0;//Returned by waitpid() after child exits.
 	proc->exit_code = 4;//User provides a value here before process exits.
 
 	proc->ft = ft_create(proc->p_name);
@@ -218,6 +221,9 @@ proc_destroy(struct proc *proc)
 		}
 		as_destroy(as);
 	}
+
+	//DEBUG ONLY!!
+	//kprintf("Number of threads: %d", proc->p_numthreads);
 
 	KASSERT(proc->p_numthreads == 0);
 	spinlock_cleanup(&proc->p_lock);
@@ -505,7 +511,7 @@ void ft_destroy(struct file_table *ft)
 		array_remove(ft->file_handle_arr, 0);
 	}
 	array_destroy(ft->file_handle_arr);//This requires an array to be empty.
-	kfree(ft->file_handle_arr);
+	//kfree(ft->file_handle_arr);
 	kfree(ft);
 	return;
 }

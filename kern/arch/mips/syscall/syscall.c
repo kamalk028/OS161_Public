@@ -107,6 +107,7 @@ syscall(struct trapframe *tf)
 
 	retval = 0;
 	ret_offset = 0;
+	err = 0;
 
 	switch (callno) {
 	    case SYS_reboot:
@@ -168,6 +169,7 @@ syscall(struct trapframe *tf)
 
 	    case SYS__exit:
 		sys__exit(tf->tf_a0);//No threads should ever pass this.
+		break;
 
 	    /* Add stuff here */
 
