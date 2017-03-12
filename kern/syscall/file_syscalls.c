@@ -25,7 +25,9 @@
 #include <synch.h>
 
 static struct cv *parent_cv;
+static struct cv *execution_chamber;
 static struct lock *parent_cv_lock;
+static struct lock *chamber_lock;
 
 int
 sys_open(const_userptr_t filename, int flags, mode_t mode, int *retval)
@@ -158,11 +160,19 @@ sys_fork(int *ret)
 int
 sys_waitpid(int pid, int *status, int options, int *ret)
 {
+	//Synch primitives can't be created at compile time.
 	if (parent_cv_lock == NULL)
 	{
 		parent_cv = cv_create("parent_cv");
 		parent_cv_lock = lock_create("parent_cv_lock");
 	}
+
+	if (chamber_lock == NULL)
+	{
+		execution_chamber = cv_create("exec_chamber");
+		chamber_lock = lock_create("chamber lock");
+	}
+
 	//pid represents the process we'll wait for to exit.
 	//  Only parents of exiting children should ever call
 	//  this function.
@@ -221,7 +231,9 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	//For now, I'm assuming it'll all go to proc->exit_code.
 	while(child->exit_code == 4)//Apparently, 0-3 are reserved.
 	{
+		lock_acquire(parent_cv_lock);
 		cv_wait(parent_cv, parent_cv_lock);
+		lock_release(parent_cv_lock);
 	}
 
 	//Here is where the exit status is generated, based on the
@@ -234,18 +246,19 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	else if (child->exit_code == 0)//case of __WEXITED
 	{
 		*status = (int) _MKWAIT_EXIT(0);
-		curproc->child_exit_status = *status;
+		child->exit_status = *status;
+		//User code will handle *status.
 	}
 	//Add the other two or three cases here.
 	//Not sure how to handle __WSTOPPED...
 
-	//Remove the child process from the process table.
-	pt_remove(child->pid);
+	//Now all children waiting to be destroyed will be woken briefly.
+	//  They will only continue if their exit_status has been created.
+	lock_acquire(chamber_lock);
+	cv_broadcast(execution_chamber, chamber_lock);
+	lock_release(chamber_lock);
 
-	//Destroy the child process.
-	//  It is safe to do this now because only the child's
-	//  parent must call waitpid.
-	proc_destroy(child);
+	//From there, the child processes will get destroyed.
 
 	*ret = pid;
 	return 0;
@@ -253,32 +266,54 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 
 void sys__exit(int exitcode)
 {
+	//I wonder if I am getting errors because these locks can never be destroyed?
 	if (parent_cv_lock == NULL)
 	{
 		parent_cv = cv_create("parent_cv");
 		parent_cv_lock = lock_create("parent_cv_lock");
 	}
 
-	curproc->exit_code = exitcode;
+	if (chamber_lock == NULL)
+	{
+		chamber_lock = lock_create("chamber_lock");
+		execution_chamber = cv_create("execution_chamber");
+	}
+
+	curproc->exit_code = exitcode;//Remember: different from exit_status.
 
 	if ((curproc->ppid == 0) || (get_proc(curproc->ppid) == NULL)){
 		//If this process has no parent, just destroy it.
 		pt_remove(curproc->pid);
+		proc_remthread(curthread);
+		//curproc->p_numthreads = 0;
+		//curthread->t_stack = NULL;
 		proc_destroy(curproc);
+		return;
 	}
-
-	struct cv *execution_chamber;
-	struct lock *chamber_lock;
-	chamber_lock = lock_create("chamber_lock");
-	execution_chamber = cv_create("execution_chamber");
 
 	//This will breifly wake all parents waiting in waitpid.
 	//  But, they will only continue if their child now has an exit code.
+	lock_acquire(parent_cv_lock);
 	cv_broadcast(parent_cv, parent_cv_lock);
+	lock_release(parent_cv_lock);
 
 	//Now, the child will wait until its parent has generated its exit status.
-	//  Once that happens, the child will be destroyed.
-	cv_wait(execution_chamber, chamber_lock);
+	//  Once that happens, the child will be released, then destroyed.
+	while(curproc->exit_status == 0){
+		lock_acquire(chamber_lock);
+		cv_wait(execution_chamber, chamber_lock);
+		lock_release(chamber_lock);
+	}
+
+	//Remove the child process from the process table.
+	pt_remove(curproc->pid);
+
+	//Destroy the child process.
+	//  It is safe to do this now because only the child's
+	//  parent must call waitpid.
+	proc_remthread(curthread);
+	proc_destroy(curproc);
+	return;
 
 	//No thread should ever reach this point.
 	kprintf("A thread somehow escaped the execution chamber!!");
