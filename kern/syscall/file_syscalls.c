@@ -252,7 +252,7 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 		child->exit_status = *status;
 		//User code will handle *status.
 	}
-	//Add the other two or three cases here.
+	//Add the other two or three cases here. CHECK thread.c TO SEE IF THOSE PROVIDE CASES!
 	//Not sure how to handle __WSTOPPED...
 
 	//Now all children waiting to be destroyed will be woken briefly.
@@ -286,15 +286,16 @@ void sys__exit(int exitcode)
 
 	if ((curproc->ppid == 0) || (get_proc(curproc->ppid) == NULL)){
 		//If this process has no parent, just destroy it.
-		struct proc *temp;
-		temp = get_proc(curproc->pid);
+		//struct proc *temp;
+		//temp = get_proc(curproc->pid);
 		pt_remove(curproc->pid);
-		proc_remthread(curthread);//This sets the curproc pointer to NULL.
-		//curproc->p_numthreads = 0;
+		//proc_remthread(curthread);//This sets the curproc pointer to NULL.
+		curproc->p_numthreads--;
 		//curthread->t_stack = NULL;
-		curproc = temp;
+		//curproc = temp;
 		proc_destroy(curproc);
-		return;
+		thread_exit();
+		return;//Code shouldn't even make it here.
 	}
 
 	//This will breifly wake all parents waiting in waitpid.
@@ -312,16 +313,18 @@ void sys__exit(int exitcode)
 	}
 
 	//Remove the child process from the process table.
-	struct proc *temp;
-	temp = get_proc(curproc->pid);
+	//struct proc *temp;
+	//temp = get_proc(curproc->pid);
 	pt_remove(curproc->pid);
 
 	//Destroy the child process.
 	//  It is safe to do this now because only the child's
 	//  parent must call waitpid.
-	proc_remthread(curthread);
-	curproc = temp;
+	//proc_remthread(curthread);
+	//curproc = temp;
+	curproc->p_numthreads--;
 	proc_destroy(curproc);
+	thread_exit();
 	return;
 
 	//No thread should ever reach this point.
