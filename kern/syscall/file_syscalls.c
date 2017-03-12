@@ -283,10 +283,13 @@ void sys__exit(int exitcode)
 
 	if ((curproc->ppid == 0) || (get_proc(curproc->ppid) == NULL)){
 		//If this process has no parent, just destroy it.
+		struct proc *temp;
+		temp = get_proc(curproc->pid);
 		pt_remove(curproc->pid);
-		proc_remthread(curthread);
+		proc_remthread(curthread);//This sets the curproc pointer to NULL.
 		//curproc->p_numthreads = 0;
 		//curthread->t_stack = NULL;
+		curproc = temp;
 		proc_destroy(curproc);
 		return;
 	}
@@ -306,12 +309,15 @@ void sys__exit(int exitcode)
 	}
 
 	//Remove the child process from the process table.
+	struct proc *temp;
+	temp = get_proc(curproc->pid);
 	pt_remove(curproc->pid);
 
 	//Destroy the child process.
 	//  It is safe to do this now because only the child's
 	//  parent must call waitpid.
 	proc_remthread(curthread);
+	curproc = temp;
 	proc_destroy(curproc);
 	return;
 
