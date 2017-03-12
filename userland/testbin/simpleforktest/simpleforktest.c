@@ -8,7 +8,7 @@ printf("Testing fork ::: \n");
 	int id = fork();
 	if(id)
 	{
-		printf("Parents says: Mera Beta ki ID: %d\n", id);
+		printf("Parents says: My child's id is %d\n", id);
 	}
 	else
 	{
