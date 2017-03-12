@@ -131,7 +131,10 @@ sys_fork(int *ret)
 	newproc = proc_fork_runprogram(name);
 
 	//NOTE: Args 3, 4, and 5 most likely should be changed.
-	result = thread_fork(name, newproc, NULL, NULL, 0);
+	struct trapframe *tf;
+	tf = newproc->tframe;
+	result = thread_fork(name, newproc, enter_forked_process, tf, 0);
+
 	if (result){
 		kprintf("Thread fork failed!");
 		return -1;
