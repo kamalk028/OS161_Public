@@ -187,7 +187,8 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	//  not do anything to it.
 	//  Passed in status value otherwise doesn't matter.
 	//  The exit code used to calculate this value comes
-	//  from the user space code.
+	//  from the user space code. 
+	//  Still need to check for EFAULT, though...
 	//options should always just be 0. Just assert that
 	//  it is the only value ever passed in (unless you
 	//  wanna implement more options). err = EINVAL.
@@ -198,8 +199,8 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	//  straight off the proc_table right when it exits.
 	//  (that'll get handled in sys__exit)
 
-	//BIGGEST HURDLE: understanding for certain how to get
-	//  the various signals a process can have upon death.
+	//BIGGEST HURDLE: understanding how to get the _WCORED case.
+	//  Understanding how to handle _WSTOPPED.
 
 	//On success, this function returns the pid of the exited
 	//  child (which is the pid passed in).
@@ -227,11 +228,11 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	//  process when multiple parents are waiting...
 	//  Could place cv_wait in a while loop, then make
 	//  sys_exit use cv_broadcast... (smart idea)
-	//Here's an issue: the child can exit by calling
-	//  sys__exit, OR by recieving a fatal signal. I am
-	//  not sure how to get that signal number, but when you
-	//  figure it out, && it to this while condition.
-	//For now, I'm assuming it'll all go to proc->exit_code.
+	//Processes can exit by calling sys__exit OR by recieving a
+	//  fatal signal. I think I have now addressed this
+	//  correctly, but I am not certain. I currently assume
+	//  the user always passes in 0 with sys__exit. I have
+	//  modified kill_curthread in trap.c to handle signals.
 	while(child->exit_code == 4)//Apparently, 0-3 are reserved.
 	{
 		lock_acquire(parent_cv_lock);
@@ -240,20 +241,37 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	}
 
 	//Here is where the exit status is generated, based on the
-	//  exit code that child now has, or the signal if the child
-	//  was killed by a fatal signal or something.
+	//  exit code that child now has.
+	if (child->exit_code < 0 || child->exit_code > 4)
+	{
+		kprintf("Invalid exit code. I'm just gonna pretend it was a 0.");
+		child->exit_code = 0;
+	}
 	if (status == NULL)
 	{
 		;//We do not want to change status in this case.
 	}
-	else if (child->exit_code == 0)//case of __WEXITED
+	else if (child->exit_code == 0)//case of __WEXITED; user called exit(0).
 	{
 		*status = (int) _MKWAIT_EXIT(0);
 		child->exit_status = *status;
 		//User code will handle *status.
 	}
-	//Add the other two or three cases here. CHECK thread.c TO SEE IF THOSE PROVIDE CASES!
-	//Not sure how to handle __WSTOPPED...
+	else if (child->exit_code == 1)//case of __WSIGNALED; kill_curthread called exit(1).
+	{
+		*status = (int) _MKWAIT_SIG(1);
+		child->exit_status = *status;
+	}
+	else if (child->exit_code == 2)//Not sure how to check for __WCORED.
+	{
+		*status = (int) _MKWAIT_CORE(2);
+		child->exit_status = *status;
+	}
+	else	//Not even sure how to handle __WSTOPPED. For now, treat it like the rest.
+	{
+		*status = (int) _MKWAIT_STOP(3);
+		child->exit_status = *status;
+	}
 
 	//Now all children waiting to be destroyed will be woken briefly.
 	//  They will only continue if their exit_status has been created.
@@ -282,7 +300,8 @@ void sys__exit(int exitcode)
 		execution_chamber = cv_create("execution_chamber");
 	}
 
-	curproc->exit_code = exitcode;//Remember: different from exit_status.
+	curproc->exit_code = exitcode;
+	//ASSUMPTION: The user will always pass in a 0 when they manually call exit().
 
 	if ((curproc->ppid == 0) || (get_proc(curproc->ppid) == NULL)){
 		//If this process has no parent, just destroy it.
@@ -299,7 +318,7 @@ void sys__exit(int exitcode)
 	}
 
 	//This will breifly wake all parents waiting in waitpid.
-	//  But, they will only continue if their child now has an exit code.
+	//  But, they will only continue if their child now has a valid exit code.
 	lock_acquire(parent_cv_lock);
 	cv_broadcast(parent_cv, parent_cv_lock);
 	lock_release(parent_cv_lock);

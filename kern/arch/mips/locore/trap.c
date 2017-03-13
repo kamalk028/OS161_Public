@@ -39,6 +39,7 @@
 #include <vm.h>
 #include <mainbus.h>
 #include <syscall.h>
+#include <file_syscalls.h>//Ryan added this, so kill_curthread could call sys__exit(1).
 
 
 /* in exception-*.S */
@@ -109,11 +110,29 @@ kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
 	}
 
 	/*
-	 * You will probably want to change this.
+	 * You will probably want to change this. UPDATE: I did it.
 	 */
+
+	//You want to change the curproc's exit_code to 1 whenever one of the above cases are called.
+	//Then make the process wait for parents, like how it would in sys_exit.
+	//sys_waitpid will make this the case of _MKWAIT_SIG(1).
+	//IN FACT, I simply called sys__exit in here. It was easier.
+
+	/*curproc->exit_code = 1;
+
+	if ((curproc->ppid == 0) || (get_proc(curproc->ppid) == NULL)){
+		pt_remove(curproc->pid);
+		curproc->p_numthreads--;
+		proc_destroy(curproc);
+		thread_exit();
+	*/
 
 	kprintf("Fatal user mode trap %u sig %d (%s, epc 0x%x, vaddr 0x%x)\n",
 		code, sig, trapcodenames[code], epc, vaddr);
+
+	sys__exit(1);
+
+	//Code shouldn't reach here anymore.
 	panic("I don't know how to handle this\n");
 }
 

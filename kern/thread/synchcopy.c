@@ -176,16 +176,16 @@ lock_create(const char *name)
 void
 lock_destroy(struct lock *lock)
 {
-	KASSERT(lock != NULL);
 	KASSERT(lock->lock_thread==NULL);
+	// add stuff here as needed : Have added some stuff
 
 	//kfree();
-	//lock->lock_thread = NULL;
+	lock->lock_thread = NULL;
 	spinlock_cleanup(&lock->lock_splk);
 	wchan_destroy(lock->lock_wchan);
 	kfree(lock->lk_name);
 	kfree(lock);
-
+	KASSERT(lock != NULL);
 }
 
 void
@@ -257,8 +257,9 @@ lock_do_i_hold(struct lock *lock)
 	{
 		return false;
 	}
+	//(void)lock;  // suppress warning until code gets written
 
-
+	//return true; // dummy until code gets written
 }
 
 ////////////////////////////////////////////////////////////
@@ -301,7 +302,7 @@ cv_destroy(struct cv *cv)
 	KASSERT(cv != NULL);
 	spinlock_cleanup(&cv->cv_splk);
 	wchan_destroy(cv->cv_wchan);
-	// We never asserted that the channel is empty when destroyed. Should we?
+	// add stuff here as needed
 	
 	//lock_destroy(lock);//Not needed b/c locks are passed to CV.
 	kfree(cv->cv_name);
@@ -391,140 +392,154 @@ cv_isempty(struct cv *cv, struct lock *lock)
 	return ret;
 }
 
-struct rwlock * rwlock_create(const char *name)
+//////////////////////////////////////////////////////////////
+//
+//RW-Locks
+
+struct rwlock *
+rwlock_create(const char *name)
 {
 	struct rwlock *rwlock;
+
 	rwlock = kmalloc(sizeof(*rwlock));
-	if(rwlock == NULL)
-	{
+	if (rwlock == NULL) {
 		return NULL;
 	}
 
-	rwlock->rwlock_name = kstrdup(name);
-	if(rwlock->rwlock_name == NULL)
-	{
+	rwlock->rwlk_name = kstrdup(name);
+	if (rwlock->rwlk_name == NULL) {
 		kfree(rwlock);
 		return NULL;
 	}
 
-	rwlock->cvariable = cv_create(name);
-	if(rwlock->cvariable == NULL)
+	rwlock->rwlock_write_wchan = wchan_create(rwlock->rwlk_name);
+	if(rwlock->rwlock_write_wchan == NULL )
 	{
-		kfree(rwlock->rwlock_name);
+		kfree(rwlock->rwlk_name);
+		kfree(rwlock);
+		return NULL;
+	}
+	
+	//Two different wait channels for each type of lock acquire/release
+	rwlock->rwlock_read_wchan = wchan_create(rwlock->rwlk_name);
+	if(rwlock->rwlock_read_wchan == NULL )
+	{
+		kfree(rwlock->rwlk_name);
 		kfree(rwlock);
 		return NULL;
 	}
 
-	rwlock->sleep_lock = lock_create(name);
-	if(rwlock->sleep_lock == NULL)
-	{
-		cv_destroy(rwlock->cvariable);
-		kfree(rwlock->rwlock_name);
-		kfree(rwlock);
-		return NULL;
-	}
 
-	/*rwlock->data parameters:
-	* 0 = Nobody holds.
-	* 1 = Any number of readers hold.
-	*   rwlock->read_threadcount tracks how many readers.
-	* 2 = Writer holds.
-	*/
-	rwlock->data=0;
-	rwlock->write_thread=NULL;
-	rwlock->read_threadcount=0;
-	rwlock->is_anyone_waiting=false;
+	spinlock_init(&rwlock->rwlock_splk);
+	
+	//rwlock_data is a signed int. -1 means obtained by writer.
+	//  0 means free. 1 or more means obtained by readers.
+	//  There should never be enough threads to cause overflow.
+	rwlock->rwlock_data=0;
+	//rwlock->rwlock_thread=NULL;
+
+	// add stuff here as needed
 
 	return rwlock;
-
 }
 
-void rwlock_destroy(struct rwlock *rwlock)
+void
+rwlock_destroy(struct rwlock *rwlock)
 {
-	KASSERT(rwlock != NULL);
-	KASSERT(rwlock->data==0);
-	KASSERT(!rwlock->is_anyone_waiting);
-	rwlock->write_thread = NULL;
-	//spinlock_cleanup(&rwlock->splk);
-	//array_cleanup(rwlock->read_threads);
-	//threadlist_cleanup(&rwlock->read_threadlist);
-	cv_destroy(rwlock->cvariable);
-	lock_destroy(rwlock->sleep_lock);
-	kfree(rwlock->rwlock_name);
+	//KASSERT(rwlock->rwlock_thread==NULL);
+	// add stuff here as needed : Have added some stuff
+
+	//kfree();
+	//rwlock->rwlock_thread = NULL;
+	spinlock_cleanup(&rwlock->rwlock_splk);
+	wchan_destroy(rwlock->rwlock_write_wchan);
+	wchan_destroy(rwlock->rwlock_read_wchan);
+	kfree(rwlock->rwlk_name);
 	kfree(rwlock);
+	KASSERT(rwlock != NULL);
 }
 
-void rwlock_acquire_read(struct rwlock *rwlock)
+void
+rwlock_acquire_read(struct rwlock *rwlock)
 {
 	KASSERT(rwlock != NULL);
+	KASSERT(curthread->t_in_interrupt == false);
 	
-	lock_acquire(rwlock->sleep_lock);
-	while(rwlock->data>1 || rwlock->is_anyone_waiting)
+	spinlock_acquire(&rwlock->rwlock_splk);
+
+	while(rwlock->rwlock_data == -1)
 	{
-		rwlock->is_anyone_waiting = true;
-		cv_wait(rwlock->cvariable, rwlock->sleep_lock);
+		wchan_sleep(rwlock->rwlock_read_wchan, &rwlock->rwlock_splk);
 	}
-	KASSERT(rwlock->data<=1);
-	//KASSERT(!rwlock->is_anyone_waiting);
-	rwlock->data=1;
-	rwlock->read_threadcount+=1;
-	//array_add(rwlock->read_threads, curthread, NULL);
-	//threadlist_addtail(&rwlock->read_threadlist, curthread);
-	lock_release(rwlock->sleep_lock);
+	//The only time a reader thread cannot acquire the lock is when a writer has it.
+	KASSERT(rwlock->rwlock_data >= 0);
+	rwlock->rwlock_data++;
 	
+	//If we later implement do_i_hold, we'll want an array for this.
+	//rwlock->rwlock_thread = curthread;
+	spinlock_release(&rwlock->rwlock_splk);
 }
 
-void rwlock_release_read(struct rwlock *rwlock)
+void
+rwlock_release_read(struct rwlock *rwlock)
 {
 	KASSERT(rwlock != NULL);
-	KASSERT(rwlock->data == 1);
-	KASSERT(rwlock->write_thread==NULL);
-	//KASSERT(do_i_hold_read(rwlock));
-	lock_acquire(rwlock->sleep_lock);
-	//unsigned num = array_num(rwlock->read_threads);
-	if(rwlock->read_threadcount > 1)
+	//KASSERT(rwlock_do_i_hold(lock));
+	
+	spinlock_acquire(&rwlock->rwlock_splk);
+	KASSERT(rwlock->rwlock_data > 0);
+	//rwlock->rwlock_thread=NULL;
+	rwlock->rwlock_data--;
+	//Wake a thread in the write_wchan, if one exists.
+	if(!wchan_isempty(rwlock->rwlock_write_wchan, &rwlock->rwlock_splk))
 	{
-		rwlock->read_threadcount-=1;
+		wchan_wakeone(rwlock->rwlock_write_wchan, &rwlock->rwlock_splk);
 	}
-	else
-	{
-		KASSERT(rwlock->read_threadcount==1);
-		rwlock->data=0;
-		rwlock->is_anyone_waiting=false;
-		rwlock->read_threadcount=0;
-		cv_broadcast(rwlock->cvariable, rwlock->sleep_lock);
-	}
-	lock_release(rwlock->sleep_lock);
-}
-
-void rwlock_acquire_write(struct rwlock *rwlock)
-{
-	KASSERT(rwlock != NULL);
-	lock_acquire(rwlock->sleep_lock);
-	while(rwlock->data!=0)
-	{
-		rwlock->is_anyone_waiting = true;
-		cv_wait(rwlock->cvariable, rwlock->sleep_lock);
-	}
-	KASSERT(rwlock->data==0);
-	KASSERT(rwlock->read_threadcount==0);
-	rwlock->data=2;
-	rwlock->write_thread = curthread;
-	lock_release(rwlock->sleep_lock);
+	//No need to wake threads in read channel, since they would alread be active.
+	
+	spinlock_release(&rwlock->rwlock_splk);
 
 }
 
-void rwlock_release_write(struct rwlock *rwlock)
+void
+rwlock_acquire_write(struct rwlock *rwlock)
 {
 	KASSERT(rwlock != NULL);
-	KASSERT(rwlock->data==2);
-	//KASSERT(do_i_hold_write(rwlock));
-	lock_acquire(rwlock->sleep_lock);
-	rwlock->data=0;
-	rwlock->is_anyone_waiting=false;
-	rwlock->write_thread=NULL;
-	cv_broadcast(rwlock->cvariable, rwlock->sleep_lock);
-	lock_release(rwlock->sleep_lock);
+	KASSERT(curthread->t_in_interrupt == false);
+	
+	spinlock_acquire(&rwlock->rwlock_splk);
 
+	while(rwlock->rwlock_data != 0)
+	{
+		wchan_sleep(rwlock->rwlock_write_wchan, &rwlock->rwlock_splk);
+	}
+	//A writer thread should never acquire the lock unless nothing else has it.
+	KASSERT(rwlock->rwlock_data == 0);
+	rwlock->rwlock_data = -1;
+	
+	//If we later implement do_i_hold, we'll want this.
+	//rwlock->rwlock_thread = curthread;
+	spinlock_release(&rwlock->rwlock_splk);
+}
+
+void
+rwlock_release_write(struct rwlock *rwlock)
+{
+	KASSERT(rwlock != NULL);
+	//KASSERT(rwlock_do_i_hold(lock));
+	
+	spinlock_acquire(&rwlock->rwlock_splk);
+	KASSERT(rwlock->rwlock_data == -1);
+	//rwlock->rwlock_thread=NULL;
+	rwlock->rwlock_data = 0;
+	if(!wchan_isempty(rwlock->rwlock_read_wchan, &rwlock->rwlock_splk))
+	{
+		wchan_wakeall(rwlock->rwlock_read_wchan, &rwlock->rwlock_splk);
+	}
+	else if(!wchan_isempty(rwlock->rwlock_write_wchan, &rwlock->rwlock_splk))
+	{
+		wchan_wakeone(rwlock->rwlock_write_wchan, &rwlock->rwlock_splk);
+	}
+	spinlock_release(&rwlock->rwlock_splk);
 }
 
