@@ -223,10 +223,10 @@ syscall(struct trapframe *tf)
 void enter_forked_process(void *i_tf, unsigned long idx)
 {
 	KASSERT(i_tf != NULL);
-struct trapframe *tf = (struct trapframe *) i_tf;
-tf->tf_v0 = idx;
-tf->tf_a3 = 0;
-tf->tf_epc += 4;
-
-mips_usermode(tf);
+	struct trapframe* d_tf = (struct trapframe*) i_tf;
+	struct trapframe tf = *d_tf;
+	tf.tf_v0 = idx;
+	tf.tf_a3 = 0;
+	tf.tf_epc += 4;
+	mips_usermode(&tf);
 }

@@ -140,12 +140,18 @@ sys_fork(int *ret)
 		return -1;
 	}
 
-	//At this point, there should be two processes...
 	if (curproc->pid == parent_pid){
 		*ret = newproc->pid;
 		return 0;
 	}
-	else if(curproc->pid == newproc->pid){
+	else
+	{
+		kprintf("Control shouldn't reach here:::");
+		return -1;
+	}
+}
+
+	/*else if(curproc->pid == newproc->pid){
 		*ret = 0;
 		return 0;
 	}
@@ -154,8 +160,7 @@ sys_fork(int *ret)
 		*ret = 0;
 		return 0;//I would make this return an error, but newproc->pid may be modified by thread_fork().
 			//This could be normal behaviour. I just want to know if that happens.
-	}
-}
+	}*/
 
 //Apparently, pid's should have their own type called pid_t.
 //  I'm gonna see if I can just use integers.
