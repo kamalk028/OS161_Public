@@ -167,10 +167,14 @@ syscall(struct trapframe *tf)
 		break;
 
 	    case SYS_waitpid:
-		err = sys_waitpid(tf->tf_a0, (int *)&tf->tf_a1, tf->tf_a2, &retval);
+	    //kprintf("INSIDE WAITPID: \n");
+	    //kprintf("THREAD NAME: %s", curproc->p_name);
+		err = sys_waitpid(tf->tf_a0, (int *)tf->tf_a1, tf->tf_a2, &retval);
 		break;
 
 	    case SYS__exit:
+	    //kprintf("INSIDE EXIT: \n");
+	    //kprintf("THREAD NAME: %s", curproc->p_name);
 		sys__exit(tf->tf_a0);//No threads should ever pass this.
 		break;
 

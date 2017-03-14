@@ -78,6 +78,7 @@ struct file_handle {
 	struct vnode *vnode;
 	off_t offset;
 	struct spinlock fh_splk;
+	struct lock *fh_lock;
 	int ref_count;//Tracks number of fd's which point to this fh.
 	int flags;
 };
@@ -116,6 +117,9 @@ struct proc {
 	int exit_status;	/* Can be filled in by sys_waitpid after exiting. */
 	int exit_code;			/* Starts as 0, filled in with user's value before process exits. */
 
+	struct proc *parent_proc; /* A Pointer to the parent process */
+	bool has_parent_exited;
+
 	/* VM */
 	struct addrspace *p_addrspace;	/* virtual address space */
 
@@ -125,6 +129,21 @@ struct proc {
 	struct trapframe *tframe;
 
 		/* add more material here as needed */
+	/* synch primitives for handling waitpid and exit */
+	struct spinlock exit_values_splk; //Mostly wont be used //Leaving it as of now //Remove it when you are sure
+	struct lock *parent_cvlock;
+	struct lock *child_cvlock; 
+	struct cv *parent_cv;
+	struct cv *child_cv;
+
+
+	/* Holding on to all the child pids
+		Add pids to child_pids whenever fork is called
+		remove pid from parents->child_pids when sys_exit is called
+	 */
+	struct lock *child_pids_lock; //Should acquire lock for adding, removing and reading out of the array.
+	struct array *child_pids;
+
 };
 
 /* This is the process structure for the kernel and for kernel-only threads. */
@@ -137,7 +156,7 @@ void proc_bootstrap(void);
 struct proc *proc_create_runprogram(const char *name);
 
 /* NEW: Set up a new process for sys_fork(). */
-struct proc *proc_fork_runprogram(const char *name);
+struct proc *proc_fork_runprogram(const char *name, int *err, int *err_code);
 
 /* Destroy a process. */
 void proc_destroy(struct proc *proc);

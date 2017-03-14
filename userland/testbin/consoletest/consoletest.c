@@ -85,7 +85,8 @@ main(int argc, char **argv)
 
 	len = snsecprintf(BUFFER_SIZE, buffer, SECRET, "Able was i ere i saw elbA", "/testbin/consoletest");
 
-	how_many = (random() % 20) + 5;
+	how_many = 10;//(random() % 20) + 5;
+
 
 	for (i = 0; i < how_many; i++) {
 		rv = write(1, invalid_addr(0x1000000), len+1);
