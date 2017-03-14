@@ -166,6 +166,10 @@ syscall(struct trapframe *tf)
 		err = sys_fork(&retval);
 		break;
 
+		case SYS_execv:
+		err = sys_execv((const char *)tf->tf_a0, (char **)tf->tf_a1, &retval);
+		break;
+
 	    case SYS_waitpid:
 	    //kprintf("INSIDE WAITPID: \n");
 	    //kprintf("THREAD NAME: %s", curproc->p_name);

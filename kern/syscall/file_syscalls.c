@@ -23,6 +23,11 @@
 #include <mips/trapframe.h>
 #include <kern/wait.h>
 #include <synch.h>
+#include <addrspace.h>
+#include <vm.h>
+#include <vfs.h>
+#include <kern/fcntl.h>
+
 
 //static struct cv *parent_cv;
 //static struct cv *execution_chamber;
@@ -157,6 +162,68 @@ sys_fork(int *ret)
 		//kprintf("Control shouldn't reach here:::");
 		return -1;
 	}
+}
+
+int sys_execv(const char *program, char **args, int *retval)
+{
+	(void) program;
+	(void) args;
+	struct addrspace *as;
+	struct vnode *v;
+	vaddr_t entrypoint, stackptr;
+	int result;
+
+	/* Open the file. */
+	result = vfs_open((char *)program, O_RDONLY, 0, &v);
+	if (result) {
+		*retval = result;
+		return -1;
+	}
+
+	/* This wont be a new process, since it will called from the user process */
+	//KASSERT(proc_getas() == NULL); 
+
+	/* Create a new address space. */
+	as = as_create();
+	if (as == NULL) {
+		vfs_close(v);
+		*retval = ENOMEM;
+		return -1;
+	}
+
+	/* Switch to it and activate it. */
+	proc_setas(as);
+	as_activate();
+
+	/* Load the executable. */
+	result = load_elf(v, &entrypoint);
+	if (result) {
+		/* p_addrspace will go away when curproc is destroyed */
+		vfs_close(v);
+		*retval = result;
+		return -1;
+	}
+
+	/* Done with the file now. */
+	vfs_close(v);
+
+	/* Define the user stack in the address space */
+	result = as_define_stack(as, &stackptr);
+	if (result) {
+		/* p_addrspace will go away when curproc is destroyed */
+		*retval = result;
+		return -1;
+	}
+
+	/* Warp to user mode. */
+	enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
+			  NULL /*userspace addr of environment*/,
+			  stackptr, entrypoint);
+
+	/* enter_new_process does not return. */
+	panic("enter_new_process returned\n");
+	*retval = EINVAL;
+	return -1;
 }
 
 	/*else if(curproc->pid == newproc->pid){
