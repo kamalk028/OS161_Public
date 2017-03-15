@@ -167,6 +167,7 @@ syscall(struct trapframe *tf)
 		break;
 
 		case SYS_execv:
+		kprintf("KAMAL: Inside syscalls.c \n");
 		err = sys_execv((const char *)tf->tf_a0, (char **)tf->tf_a1, &retval);
 		break;
 
