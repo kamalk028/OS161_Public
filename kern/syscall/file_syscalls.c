@@ -39,7 +39,7 @@ static char buffer[ARG_MAX];
 //static char *k_args[1000];
 //static char *stack_clone[1000];
 static struct lock *execv_lock = NULL;
-static int arg_len_arr[1000];
+static int arg_len_arr[3860];
 
 int
 sys_open(const_userptr_t filename, int flags, mode_t mode, int *retval)
