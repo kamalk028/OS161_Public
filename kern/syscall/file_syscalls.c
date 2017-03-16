@@ -97,7 +97,11 @@ int sys_write(int fd, void *buff, size_t len, int *ret)
 	struct file_table *ft;
 	KASSERT(curproc != NULL);
 	ft = curproc->ft;
-	KASSERT(ft != NULL); 
+	KASSERT(ft != NULL);
+	if (buff == NULL){
+		*ret = -1;
+		return EFAULT;
+	}
 	return ft_write(fd, buff, len, ft, ret);
 }
 
@@ -108,6 +112,10 @@ int sys_read(int fd, void* buff, size_t len, int* ret)
 	KASSERT(curproc != NULL);
 	ft = curproc->ft;
 	KASSERT(ft != NULL);
+	if (buff == NULL){
+		*ret = -1;
+		return EFAULT;
+	}
 	return ft_read(fd, buff, len, ft, ret);
 }
 

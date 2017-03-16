@@ -649,7 +649,7 @@ bool is_valid_fd(int fd, struct file_table *ft)
 
 int ft_write(int fd, void *buff, size_t bufflen, struct file_table *ft, int *retval)
 {
-	KASSERT(buff != NULL);
+	KASSERT(buff != NULL);//This assertion actually causes a badcall test to fail!
 	KASSERT(ft != NULL);
 	KASSERT(retval != NULL);
 	int err;
@@ -674,7 +674,7 @@ int ft_write(int fd, void *buff, size_t bufflen, struct file_table *ft, int *ret
 		*retval = EBADF;
 		return err;
 	}
-	
+
 	err=fh_write(buff, bufflen, fh, retval);
 	return err;
 }
