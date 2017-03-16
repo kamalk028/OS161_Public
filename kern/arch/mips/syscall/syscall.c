@@ -174,7 +174,9 @@ syscall(struct trapframe *tf)
 		sys__exit(tf->tf_a0);//No threads should ever pass this.
 		break;
 
-	    /* Add stuff here */
+	    case SYS_execv:
+		err = sys_execv((const_userptr_t) tf->tf_a0, (const_userptr_t) tf->tf_a1, &retval);
+		break;
 
 	    default:
 		kprintf("Unknown syscall %d\n", callno);

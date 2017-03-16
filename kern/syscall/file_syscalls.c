@@ -23,6 +23,7 @@
 #include <mips/trapframe.h>
 #include <kern/wait.h>
 #include <synch.h>
+#include <test.h>//for calling execv_runprogram.
 
 static struct cv *parent_cv;
 static struct cv *execution_chamber;
@@ -354,6 +355,66 @@ void sys__exit(int exitcode)
 	//No thread should ever reach this point.
 	kprintf("A thread somehow escaped the execution chamber!!");
 }
+
+//Need to do type casting in syscall.c to make args a const_userptr_t, so copyinstr works.
+//For now, I assume args is passed in as a const_user_ptr_t to an array of const_userptr_t's.
+/*int sys_execv(const_userptr_t program, const_userptr_t args, int *retval)
+{
+	*retval = 0;
+	KASSERT(curproc != NULL);
+	char kprogram[320];//copyinstr so the kernel can access the program name.
+	int copyerr;
+	size_t actualSizeRead = 0;
+	size_t len = 320;
+	copyerr = copyinstr(program, kprogram, len, &actualSizeRead);
+	if(copyerr)
+	{
+		kprintf("Error copying pathname!");
+		*retval = -1;
+		return copyerr;
+	}
+
+	//IF I AM NOT MISTAKEN, args is a pointer to an array of const_userptr_t's.
+	//  We need to convert that pointer into a kernel-usable pointer so the array is accessible.
+	const_userptr_t karray[200];
+	//  Then we need to take each of those userptrs in the array and turn them into kernel pointers (char *).
+	char *kargs[200];//200 arrays of 320 chars each for args.
+	//kargs = array_create(); //Ignore this line, old idea.
+	//array_init(kargs);
+
+	//WARNING! I am really not certain how to handle the user pointer to user pointers!!
+	//  I believe that args points to an array, and objects of the array are user pointers.
+	//  I hope that the first copyin allows the kernel to access those user pointers!!
+	copyerr = copyin(args, karray, 64000);
+	if(copyerr)//You might get an error, because args may need to be constant.
+	{
+		kprintf("Error copying args array!");
+		*retval = -1;
+		return copyerr;
+	}
+
+	//Copyin each userptr_t from karray into kargs, so the kernel can access the strings.
+	len = 320;
+	int i = 0;
+	while (karray[i] != NULL)//This may attempt to check the value of a userptr_t, which may fail.
+	{
+		actualSizeRead = 0;
+		copyerr = copyinstr(karray[i], kargs[i], len, &actualSizeRead);
+		if(copyerr)
+		{
+			kprintf("Error copying one of the args!");
+			*retval = -1;
+			return copyerr;
+		}
+		i++;
+	}
+
+	//At this point, we should make a kernel-readable pointer to the array of pointers to strings.
+	int err = 0;
+	err = execv_runprogram(kprogram, kargs);//This won't actually return anything unless there was an error.
+	*retval = -1;
+	return err;
+}*/
 
 uint64_t to64(uint32_t high, uint32_t low)
 {

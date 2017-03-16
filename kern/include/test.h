@@ -121,6 +121,9 @@ int nettest(int, char **);
 /* Routine for running a user-level program. */
 int runprogram(char *progname);
 
+/*NEW: Run a user-level program using execv. */
+//int execv_runprogram(char *progname, char **argv);
+
 /* Kernel menu system. */
 void menu(char *argstr);
 

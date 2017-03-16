@@ -20,5 +20,6 @@ int sys_getpid(int *ret);
 int sys_fork(int *ret);
 int sys_waitpid(int pid, int *status, int options, int *ret);
 void sys__exit(int exitcode);
+//int sys_execv(const_userptr_t program, const_userptr_t args, int *retval);
 
 //#endif

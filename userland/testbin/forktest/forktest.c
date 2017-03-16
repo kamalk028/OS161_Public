@@ -46,12 +46,35 @@
 
 #define FORKTEST_FILENAME_BASE "forktest"
 
+//Here is a simpler fork test I wrote.
+
+/*
+int
+main(int argc, char *argv[])
+{
+	(void)argc;
+	(void)*argv;
+	int result;
+
+	result = fork();
+	if (result == 0){
+		printf("Yo, I'm the child process!");
+	}
+	else{
+		printf("I'm probably a parent process!");
+	}
+	return 0;
+}
+*/
+
+
 static char filename[32];
 
 /*
  * This is used by all processes, to try to help make sure all
  * processes have a distinct address space.
  */
+
 static volatile int mypid;
 
 /*
@@ -69,6 +92,7 @@ int pow_int(int x, int y) {
 /*
  * Helper function for fork that prints a warning on error.
  */
+
 static
 int
 dofork(void)
@@ -86,6 +110,7 @@ dofork(void)
  * the pid into the data segment and read it back repeatedly, making
  * sure it's correct every time.
  */
+
 static
 void
 check(void)
@@ -116,6 +141,7 @@ check(void)
  * generated the current process; that means it's time to exit. Only
  * the parent of all the processes returns from the chain of dowaits.
  */
+
 static
 void
 dowait(int nowait, int pid)
@@ -305,3 +331,4 @@ main(int argc, char *argv[])
 	warnx("Complete.");
 	return 0;
 }
+

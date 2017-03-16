@@ -44,6 +44,7 @@
 #include <vfs.h>
 #include <syscall.h>
 #include <test.h>
+#include <copyinout.h>
 
 /*
  * Load program "progname" and start running it in usermode.
@@ -106,4 +107,147 @@ runprogram(char *progname)
 	panic("enter_new_process returned\n");
 	return EINVAL;
 }
+/*
+int
+execv_runprogram(char *progname, char *argv[])
+{
+	struct addrspace *as;
+	struct vnode *v;
+	vaddr_t entrypoint, stackptr;
+	int result;
+	userptr_t userspace;
+
+	// Open the file.
+	//This might be what normally starts the console.
+	//It gets progname passed into it, so I assume it can run anything else.
+	result = vfs_open(progname, O_RDONLY, 0, &v);
+	if (result) {
+		return result;
+	}
+
+	// We should be a new process.
+	
+	// THIS MAY BE A BIG PROBLEM!! Or, maybe I need to get rid of this...
+	
+	KASSERT(proc_getas() == NULL);
+
+	// Create a new address space.
+	as = as_create();
+	if (as == NULL) {
+		vfs_close(v);
+		return ENOMEM;
+	}
+
+	// Switch to it and activate it.
+	proc_setas(as);
+	as_activate();
+
+	// Load the executable.
+	result = load_elf(v, &entrypoint);
+	if (result) {
+		// p_addrspace will go away when curproc is destroyed
+		vfs_close(v);
+		return result;
+	}
+
+	// Done with the file now.
+	vfs_close(v);
+
+	// Define the user stack in the address space
+	result = as_define_stack(as, &stackptr);//Always starts at 0x80000000
+	if (result) {
+		// p_addrspace will go away when curproc is destroyed
+		return result;
+	}
+	
+	//This new array should make the copying to user stack easier. THIS GETS MESSY.
+	char *argv4[1000];//A version of argv where each value is 4 chars.
+				//These will get copyout'ed onto the stack.
+				//Elements are in the opposite order as they were.
+				//NOTE THAT IT IS NOT AN ARRAY OF POINTERS.
+	int i = 0;//Gotta find the first NULL element of *argv[].
+	while (argv[i] != NULL)
+	{
+		i++;
+	}
+	int argc = i;//To be used by enter_new_process.
+	i--;
+	int c = 0;//Char counter for each string.
+	int argv4_index = 0;//Incremented every four chars.
+	int first_char_idx = 0;//Help make each arg in argv point to the correct 4-byte element.
+	while (i >= 0)//Start from the last element of argv, skipping NULLs.
+	{
+		while (argv[i][c] != '\0')
+		{
+			argv4[argv4_index][c % 4] = argv[i][c];
+			if (c == 0)
+			{
+				first_char_idx = argv4_index;
+			}
+			else if ((c % 4) == 3)
+			{
+				argv4_index++;
+			}
+			c++;
+		}
+		//At this point, a /0 terminator was found.
+		argv4[argv4_index][c % 4] = '\0';
+		while ((c % 4) != 3)
+		{//Make sure every char is filled!
+			c++;
+			argv4[argv4_index][c % 4] = '\0';
+		}
+		//At this point, move on to the next string.
+		//Update *argv[i] so that it points to the correct 4-char value.
+		argv[i] = argv4[first_char_idx];
+		i--;
+		c = 0;
+		argv4_index++;
+	}
+
+	//Copy the pointers in each element of argv[] to the userstack.
+	//MAY NEED TO COPYOUT THE 4-BYTE ARRAYS FIRST!
+	//WE PORBABLY NEED A DIFFERENT userptr_t FOR EACH COPYOUT!! For now, I just assumed copyout pushes the addresses onto a stack, and userptr_t userspace is recyclable.
+	i = 0;
+	int copyerr;
+	while(argv[i] != NULL)
+	{
+		copyerr = copyout(argv[i], userspace, 320);
+		if (copyerr) {
+			kprintf("Copying argv pointers to userstak failed!");
+			return copyerr;
+		}
+		i++;
+	}
+	copyerr = copyout(NULL, userspace, 320);//Not sure how many bytes should go here.
+	if (copyerr) {
+		kprintf("I couldn't even copy a NULL pointer to userstack!");
+		return copyerr;
+	}
+
+	//Copy all the 4-byte arrays out to userspace.
+	i = 0;
+	size_t actualSize = 0;
+	while(argv4[i] != NULL)
+	{
+		copyerr = copyoutstr(argv4[i], userspace, 4, &actualSize);
+		if (copyerr) {
+			kprintf("Copying of 4-byte strings failed!");
+			return copyerr;//NOTE: To use copyout on those values, they must be char pointers, not just char arrays!
+		i++;
+	}
+
+	//At this point, each element of argv should contain pointers to the first 4 bytes of each original string.
+
+	// Warp to user mode. WARNING: I may have needed to copyout argv or something.
+	//You are allowed to keep the environment as NULL, though.
+	enter_new_process(argc,
+			  *argv, //userspace addr of argv. Note that it is a userptr_t.
+			  NULL, //userspace addr of environment, DO NOT TOUCH THIS.
+			  stackptr, entrypoint);
+
+	// enter_new_process does not return.
+	panic("enter_new_process returned\n");
+	return EINVAL;
+}*/
 
