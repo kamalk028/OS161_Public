@@ -119,10 +119,72 @@ proc_create(const char *name)
 	proc->tframe = kmalloc(sizeof(struct trapframe));
 	if(proc->tframe == NULL)
 	{
+		ft_destroy(proc->ft);
 		kfree(proc->p_name);
 		kfree(proc);
 		return NULL;
 	}
+
+	/*
+	* Initialising synch primitives added for waitpid and exit
+	*/
+	proc->parent_cvlock = lock_create("parent_cvlock");
+	proc->child_cvlock = lock_create("child_cvlock");
+	proc->parent_cv = cv_create("parent_cv");
+	proc->child_cv = cv_create("child_cv");
+	if(proc->parent_cvlock == NULL || proc->child_cvlock == NULL || proc->parent_cv == NULL || proc->child_cv == NULL)
+	{
+		if(proc->parent_cvlock != NULL)
+		{
+			lock_destroy(proc->parent_cvlock);
+		}
+		if(proc->child_cvlock != NULL)
+		{
+			lock_destroy(proc->child_cvlock);
+		}
+		if(proc->parent_cv != NULL)
+		{
+			cv_destroy(proc->parent_cv);
+		}
+		if(proc->child_cv != NULL)
+		{
+			cv_destroy(proc->child_cv);
+		}
+		ft_destroy(proc->ft);
+		kfree(proc->tframe);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+
+	/* Initialising child_pids: RECAP: It holds pids of children processes*/
+	proc->child_pids_lock = lock_create("child_pids_lock");
+	if(proc->child_pids_lock == NULL)
+	{
+		lock_destroy(proc->parent_cvlock);
+		lock_destroy(proc->child_cvlock);
+		cv_destroy(proc->parent_cv);
+		cv_destroy(proc->child_cv);
+		ft_destroy(proc->ft);
+		kfree(proc->tframe);
+		kfree(proc->p_name);
+		kfree(proc);
+	}
+	proc->child_pids = array_create();
+	if(proc->child_pids == NULL)
+	{
+		lock_destroy(proc->child_pids_lock);
+		lock_destroy(proc->parent_cvlock);
+		lock_destroy(proc->child_cvlock);
+		cv_destroy(proc->parent_cv);
+		cv_destroy(proc->child_cv);
+		ft_destroy(proc->ft);
+		kfree(proc->tframe);
+		kfree(proc->p_name);
+		kfree(proc);
+	}
+
+	spinlock_init(&proc->exit_values_splk);
 
 	proc->p_numthreads = 0;
 	spinlock_init(&proc->p_lock);
@@ -133,12 +195,16 @@ proc_create(const char *name)
 	/* VFS fields */
 	proc->p_cwd = NULL;
 
+	/* Pointer to parent process */
+	proc->parent_proc = NULL;
+	proc->has_parent_exited = false;
+
 	/* New stuff for multiplexing. */
 	//proc->pid = 2;//PID SHOULD BE ASSIGNED AFTER PLACEMENT ON proc_table.
 
 	//NOTE: Changed exit_status to reflect own process instead of child.
 	//  That is because a process can have more than one child!
-	proc->exit_status = 0;//Returned by waitpid() after child exits.
+	proc->exit_status = -1;//Returned by waitpid() after child exits.
 	proc->exit_code = 4;//User provides a value here before process exits.
 
 //	proc->ft = ft_create(proc->p_name);
@@ -167,6 +233,15 @@ proc_destroy(struct proc *proc)
 
 	KASSERT(proc != NULL);
 	KASSERT(proc != kproc);
+
+	lock_destroy(proc->child_pids_lock);
+	array_cleanup(proc->child_pids);
+
+	/*Destory primitives created for waitpid and exit syscalls*/
+	lock_destroy(proc->parent_cvlock);
+	lock_destroy(proc->child_cvlock);
+	cv_destroy(proc->parent_cv);
+	cv_destroy(proc->child_cv);
 
 	/*
 	 * We don't take p_lock in here because we must have the only
@@ -233,7 +308,7 @@ proc_destroy(struct proc *proc)
 
 	//DEBUG ONLY!!
 	//kprintf("Number of threads: %d", proc->p_numthreads);
-
+	proc->parent_proc = NULL;
 	KASSERT(proc->p_numthreads == 0);
 	spinlock_cleanup(&proc->p_lock);
 
@@ -309,7 +384,7 @@ proc_create_runprogram(const char *name)
 //This is to be called by sys_fork(). This is similar to proc_create_runprogram, but
 //  it does not initialize the console, and it copies the old process' ft. 
 struct proc *
-proc_fork_runprogram(const char *name)//fork() currently takes no name arg.
+proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currently takes no name arg.
 {
 	//Note that, at this point in the code, there is still only one process
 	//  in control. thread_fork() will be called inside sys_fork().
@@ -319,6 +394,8 @@ proc_fork_runprogram(const char *name)//fork() currently takes no name arg.
 
 	newproc = proc_create(name);
 	if (newproc == NULL) {
+		*err = -1;
+		*err_code = ENOMEM;
 		return NULL;
 	}
 
@@ -331,7 +408,9 @@ proc_fork_runprogram(const char *name)//fork() currently takes no name arg.
 
 	if(newproc->p_addrspace == NULL)
 	{
-		kprintf("I THINK SYSFORK FAILED: p_addrspace for the new proc is null even after calling as_copy:::");
+		*err_code = ENOMEM;
+		*err = -1;
+		return NULL;
 	}
 
 	//spinlock_acquire(&curproc->p_lock);
@@ -356,7 +435,16 @@ proc_fork_runprogram(const char *name)//fork() currently takes no name arg.
 	pt[next_pid].proc = newproc;//First PID for this function should be 3.
 	newproc->pid = next_pid;
 	newproc->ppid = curproc->pid;//curproc is the parent proc.
+	newproc->parent_proc = curproc; //Setting reference to parent process
+	newproc->has_parent_exited = false;
 	next_pid++;
+
+	/*Adding the pid to child_pids array of the parent (curproc)*/
+	unsigned idx = 0;
+	//Acquire lock and proceed
+	lock_acquire(curproc->child_pids_lock);
+	array_add(curproc->child_pids, (void *)newproc->pid, &idx);
+	lock_release(curproc->child_pids_lock);
 
 	return newproc;
 }
@@ -567,6 +655,7 @@ int ft_write(int fd, void *buff, size_t bufflen, struct file_table *ft, int *ret
 	int err;
 	err = 0;
 
+	//kprintf("Inside ft_write: FD value is: %d\n",fd);
 	//Checks for valid fd.
 	int num = array_num(ft->file_handle_arr);//ASSUMPTION: array_num still counts if an element == NULL.
 	if(fd < 0 || fd >= num)
@@ -621,7 +710,7 @@ int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int
 	//err will now hold 0 unless fh_open failed.
 	if(err)
 	{
-		*retval = -1; //This is not correct
+		*retval = -1; //This is supposedly not correct, but badcall-open is passing anyway.
 		return err;
 	}
 	
@@ -672,16 +761,17 @@ int ft_close(int fd, struct file_table *ft, int *retval)
 	KASSERT(ft != NULL);
 	int err = 0;
 	struct file_handle *fh;
-	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
 
 	//Checks for valid fd. Note that fd's 0, 1, and 2 ARE ALLOWED.
 	int num = array_num(ft->file_handle_arr);
-	if(fd < 0 || fd >= num)
+	if(fd < 0 || fd >= num || array_get(ft->file_handle_arr, fd) == NULL)
 	{
 		err = EBADF;
 		*retval = -1;
 		return err;	
 	}
+
+	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
 
 	//Remove the handle from the file table.
 	//NOTE: array_remove is not used because it can automatically shift items downward.
@@ -704,20 +794,46 @@ int ft_copy(int oldfd, int newfd, struct file_table *ft, int *retval)
 	KASSERT(ft != NULL);
 	int err = 0;
 	struct file_handle *fh;
-	fh = (struct file_handle*) array_get(ft->file_handle_arr, oldfd);
+	unsigned int idx = 0;
 
-	//Do the usual checl for valid fd.
+	if (newfd == oldfd){
+		return err;//Do nothing in this case.
+	}
+
+	//Do the usual check for valid fd on oldfd. //NOTE: 0-2 ARE NOT ALLOWED! They probably should be, though. Even though that's crazy.
 	int num = array_num(ft->file_handle_arr);
-	if(oldfd < 0 || oldfd >= num)
+	if(oldfd < 0 || oldfd >= num || array_get(ft->file_handle_arr, oldfd) == NULL)
 	{
 		err = EBADF;
 		*retval = -1;
-		return err;	
+		return err;
 	}
+	fh = (struct file_handle*) array_get(ft->file_handle_arr, oldfd);
+
+	//Also need to check the validity of newfd. Cannot be negative,
+	//  and if it is larger than array_num, then the array must be expanded.
+	//  I will impose a hard limit on newfd being less than 128.
+	if (newfd < 0 || newfd > 127)
+	{
+		err = EBADF;
+		*retval = -1;
+		return err;
+	}
+	while (newfd >= num)
+	{
+		//array_set will return an error if we do not manually increase size.
+		array_add(ft->file_handle_arr, NULL, &idx);
+		num++;
+	}
+
 	//CHECK FOR A fh IN newfd BEFOREHAND! (Only neccesary b/c fh may need to be destroyed.)
 	if(((unsigned int)newfd < array_num(ft->file_handle_arr)) && (array_get(ft->file_handle_arr, newfd) != NULL))
 	{
 		err = ft_close(newfd, ft, retval);
+		if (err) {
+			*retval = -1;
+			return err;
+		}
 	}
 
 	//Add the file handle to the ft. It is intentionally the exact same file handle.
@@ -791,6 +907,14 @@ struct file_handle* fh_create(const char* file_name)
 		return NULL;
 	}
 
+	fh->fh_lock = lock_create("fh_lock");
+	if(fh->fh_lock == NULL)
+	{
+		kfree(fh->file_name);
+		kfree(fh);
+		return NULL;
+	}
+
 	spinlock_init(&fh->fh_splk);
 	fh->vnode = NULL;
 	fh->offset = 0;
@@ -803,6 +927,7 @@ struct file_handle* fh_create(const char* file_name)
 void fh_destroy(struct file_handle *fh)
 {
 	KASSERT(fh != NULL);
+	lock_destroy(fh->fh_lock);
 	spinlock_cleanup(&fh->fh_splk);
 	fh->vnode = NULL;
 	fh->flags = 0;
@@ -848,10 +973,12 @@ int fh_write(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 		*retval = EBADF;
 		return err;
 	}
+	lock_acquire(fh->fh_lock);//spinlock_acquire(&fh->fh_splk);
 	uio_uinit(&iov, &uio, buff, bufflen, fh->offset, UIO_WRITE);
 	err = VOP_WRITE(fh->vnode, &uio);
 	if(err)//VOP_WRITE always returns zero unless there was an error.
 	{
+		lock_release(fh->fh_lock);
 		*retval = err;
 		return err;
 	}
@@ -859,10 +986,10 @@ int fh_write(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 	 *  Getting offset and bytes written from uio
 	 *  Please make sure if getting offset and res_id like this is okay 
 	 */
-	spinlock_acquire(&fh->fh_splk);
 	fh->offset = uio.uio_offset;
 	*retval = bufflen - uio.uio_resid;
-	spinlock_release(&fh->fh_splk);
+	lock_release(fh->fh_lock);
+	//spinlock_release(&fh->fh_splk);
 	return err;
 }
 
@@ -881,17 +1008,18 @@ int fh_read(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 		*retval = EBADF;
 		return err;
 	}
+	lock_acquire(fh->fh_lock);//spinlock_acquire(&fh->fh_splk);//spinlock_acquire(&fh->fh_splk);
 	uio_uinit(&iov, &uio, buff, bufflen, fh->offset, UIO_READ);
 	err = VOP_READ(fh->vnode, &uio);
 	if(err)
 	{
+		lock_release(fh->fh_lock);
 		*retval = err;
 		return err;
 	}
-	spinlock_acquire(&fh->fh_splk);
 	fh->offset = uio.uio_offset;
 	*retval = bufflen - uio.uio_resid;
-	spinlock_release(&fh->fh_splk);
+	lock_release(fh->fh_lock);//spinlock_acquire(&fh->fh_splk);//spinlock_release(&fh->fh_splk);
 	return err;
 }
 
@@ -911,7 +1039,7 @@ int fh_lseek(off_t offset, int whence, struct file_handle *fh, off_t *retval)
 			new_offset = offset;
 			break;
 		case SEEK_CUR:
-			spinlock_acquire(&fh->fh_splk);
+			lock_acquire(fh->fh_lock);//spinlock_acquire(&fh->fh_splk);
 			new_offset = fh->offset + offset;
 			break;
 		case SEEK_END: ;
@@ -926,21 +1054,21 @@ int fh_lseek(off_t offset, int whence, struct file_handle *fh, off_t *retval)
 	}
 	if(new_offset < 0)
 	{
-		if(spinlock_do_i_hold(&fh->fh_splk))
+		if(lock_do_i_hold(fh->fh_lock))
 		{
-			spinlock_release(&fh->fh_splk);
+			lock_release(fh->fh_lock);//spinlock_release(&fh->fh_splk);
 		}
 		err = EINVAL;
 		*retval = EINVAL;
 		return err;
 	}
-	if(!spinlock_do_i_hold(&fh->fh_splk))
+	if(!lock_do_i_hold(fh->fh_lock))
 	{
-		spinlock_acquire(&fh->fh_splk);
+		lock_acquire(fh->fh_lock);//spinlock_acquire(&fh->fh_splk);
 	}
 	fh->offset = new_offset;
 	*retval = fh->offset;
-	spinlock_release(&fh->fh_splk);
+	lock_release(fh->fh_lock);//spinlock_release(&fh->fh_splk);
 	return err;
 }
 
