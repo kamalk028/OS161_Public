@@ -220,6 +220,26 @@ int sys_execv(const char *program, char **args, int *retval)
 		}
 	}
 
+	//This check breaks execv, even though it works in waitpid.
+	/*unsigned int progaddr = (unsigned int)program;
+	unsigned int argsaddr = (unsigned int)args;
+
+	if ((progaddr <= 0x40000000) ||
+		(progaddr >= 0x80000000)){
+		//Even if this does work, it may need to change on ASST3...
+		//The mod4 check makes badcall-waitpid pass, but breaks forkbomb and badcall-write...
+		*retval = -1;//TRY REMOVING THE CHECK FOR MOD 4! THESE ARE CHARS, NOT INTS! It didn't work...
+		return EFAULT;
+	}
+
+	if ((argsaddr <= 0x40000000) ||
+		(argsaddr >= 0x80000000)){
+		//Why didn't I write a funtion to do this? I was tired, okay?
+		*retval = -1;
+		return EFAULT;
+	}*/
+
+
 	unsigned actual = 0;
 	
 
@@ -227,11 +247,19 @@ int sys_execv(const char *program, char **args, int *retval)
 	unsigned buff_idx=0;
 	unsigned itr = 0;
 
+	//This code may have assumed that every string would have a null terminator. An empty string would blow it.
+	lock_acquire(execv_lock);
+	//Must expect that this while loop never returns before finishing!
 	while(args[args_idx] != NULL)
 	{
 		copyinstr((const_userptr_t)args[args_idx], &buffer[buff_idx], ARG_MAX, &actual);
 		unsigned len = 0;
 		len = strlen(&buffer[buff_idx]);
+		//Extra check for totally empty string. ASSUMPTION: It should be allowed to pass no problem. (Test still failed)
+		if (len == 0){
+			buffer[buff_idx] = '\0';
+			len++;
+		}
 		buff_idx = buff_idx+len;
 
 		/* Padding required emptys */
@@ -250,7 +278,6 @@ int sys_execv(const char *program, char **args, int *retval)
 		arg_len_arr[args_idx] = len+n_extra;
 
 		args_idx++;
-
 	}
 
 	unsigned n_args = args_idx+1;
@@ -268,6 +295,7 @@ int sys_execv(const char *program, char **args, int *retval)
 	result = vfs_open((char *)program, O_RDONLY, 0, &v);
 	if (result) {
 		*retval = result;
+		lock_release(execv_lock);
 		return -1;
 	}
 
@@ -279,6 +307,7 @@ int sys_execv(const char *program, char **args, int *retval)
 	if (as == NULL) {
 		vfs_close(v);
 		*retval = ENOMEM;
+		lock_release(execv_lock);
 		return -1;
 	}
 
@@ -292,6 +321,7 @@ int sys_execv(const char *program, char **args, int *retval)
 		/* p_addrspace will go away when curproc is destroyed */
 		vfs_close(v);
 		*retval = result;
+		lock_release(execv_lock);
 		return -1;
 	}
 
@@ -303,6 +333,7 @@ int sys_execv(const char *program, char **args, int *retval)
 	if (result) {
 		/* p_addrspace will go away when curproc is destroyed */
 		*retval = result;
+		lock_release(execv_lock);
 		return -1;
 	}
 
@@ -310,7 +341,7 @@ int sys_execv(const char *program, char **args, int *retval)
 	d_stack_ptr = stackptr - buff_idx - n_args*4;
 	addr_ptr = d_stack_ptr;
 
-
+	//May need to use a lock on this.
 	buff_idx = 0;
 	for(args_idx = 0; args_idx<n_args-1; args_idx++)
 	{
@@ -324,8 +355,10 @@ int sys_execv(const char *program, char **args, int *retval)
 	copyout(dummy2, (userptr_t)addr_ptr, 4);
 
 	stackptr = d_stack_ptr;
+	
+	lock_release(execv_lock);//Hopefully nothing writes to the pointer right at this moment...
 
-	/* Warp to user mode. */
+	/* Warp to user mode. It MIGHT be dangerous to pass the stackptr as two args here...*/
 	enter_new_process(n_args-1 /*argc*/, (userptr_t) stackptr /*userspace addr of argv*/,
 			  NULL /*userspace addr of environment*/,
 			  stackptr, entrypoint);
@@ -395,6 +428,7 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 		return copyerr;//This was an attempt athandling invalid ptrs.
 	}*/
 
+	//Code doesn't even make it here for randcall.t.
 	unsigned int stataddr = (unsigned int)status;
 	//kprintf("Address of status is: 0x%x \n", stataddr);
 

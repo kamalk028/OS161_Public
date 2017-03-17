@@ -79,6 +79,9 @@ static struct lock *pt_lock;
 struct proc *
 get_proc(int pid)
 {
+	if (pid >= MAX_PROC || pid < 0){
+		return NULL;
+	}
 	return pt[pid].proc;
 }
 
