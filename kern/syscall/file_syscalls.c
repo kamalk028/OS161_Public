@@ -205,11 +205,20 @@ void print_padded_str(char *buffer, int len)
 
 int sys_execv(const char *program, char **args, int *retval)
 {
-	(void)args;
+	int err = 0;
+	//(void)args;
 	struct addrspace *as;
 	struct vnode *v;
 	vaddr_t entrypoint, stackptr;
 	int result;
+	char program_test[10];
+	char *args_test[1];
+	//unsigned prg_test_idx = 0;
+	if(program == NULL || args == NULL)
+	{
+		*retval = EFAULT;
+		return EFAULT;
+	}
 	if(execv_lock == NULL)
 	{
 		execv_lock = lock_create("execv_lock");
@@ -219,6 +228,42 @@ int sys_execv(const char *program, char **args, int *retval)
 			return -1;
 		}
 	}
+	err = copyin((const_userptr_t) program, program_test, 10);
+	if(err)
+	{
+		*retval = err;
+		return err;
+	}
+	err = copyin((const_userptr_t)args, args_test, 4);
+	if(err)
+	{
+		*retval = err;
+		return err;
+	}
+
+	/*size_t size = 0;
+	size_t len = 10;
+	//copycheck(const_userptr_t userptr, size_t len, size_t *stoplen)
+	err = copycheck((const_userptr_t) program, len, &size);
+	if(err)
+	{
+		*retval = err;
+		return err;
+	}
+
+	err = copycheck((const_userptr_t) args, len, &size);
+	if(err)
+	{
+		*retval = err;
+		return err;
+	}*/
+
+	/*int e_prg_test = copyinstr((const_userptr_t)program, program_test, 10, &prg_test_idx);
+	if(e_prg_test)
+	{
+		*retval = EFAULT;
+		return EFAULT;
+	}*/
 
 	//This check breaks execv, even though it works in waitpid.
 	/*unsigned int progaddr = (unsigned int)program;
@@ -252,7 +297,13 @@ int sys_execv(const char *program, char **args, int *retval)
 	//Must expect that this while loop never returns before finishing!
 	while(args[args_idx] != NULL)
 	{
-		copyinstr((const_userptr_t)args[args_idx], &buffer[buff_idx], ARG_MAX, &actual);
+		err = copyinstr((const_userptr_t)args[args_idx], &buffer[buff_idx], ARG_MAX, &actual);
+		if(err)
+		{
+			lock_release(execv_lock);
+			*retval = err;
+			return err;
+		}
 		unsigned len = 0;
 		len = strlen(&buffer[buff_idx]);
 		//Extra check for totally empty string. ASSUMPTION: It should be allowed to pass no problem. (Test still failed)
@@ -277,6 +328,12 @@ int sys_execv(const char *program, char **args, int *retval)
 
 		arg_len_arr[args_idx] = len+n_extra;
 
+		/*if(program == NULL || args == NULL)
+		{
+			lock_release(execv_lock);
+			*retval = EFAULT;
+			return -1;
+		}*/
 		args_idx++;
 	}
 
@@ -291,12 +348,14 @@ int sys_execv(const char *program, char **args, int *retval)
 
 	vaddr_t value_ptr, addr_ptr, d_stack_ptr;
 
+
+
 	/* Open the file. */
 	result = vfs_open((char *)program, O_RDONLY, 0, &v);
 	if (result) {
-		*retval = result;
 		lock_release(execv_lock);
-		return -1;
+		*retval = result;
+		return result;
 	}
 
 	/* This wont be a new process, since it will called from the user process */
@@ -308,7 +367,7 @@ int sys_execv(const char *program, char **args, int *retval)
 		vfs_close(v);
 		*retval = ENOMEM;
 		lock_release(execv_lock);
-		return -1;
+		return ENOMEM;
 	}
 
 	/* Switch to it and activate it. */
@@ -322,7 +381,7 @@ int sys_execv(const char *program, char **args, int *retval)
 		vfs_close(v);
 		*retval = result;
 		lock_release(execv_lock);
-		return -1;
+		return result;
 	}
 
 	/* Done with the file now. */
@@ -334,7 +393,7 @@ int sys_execv(const char *program, char **args, int *retval)
 		/* p_addrspace will go away when curproc is destroyed */
 		*retval = result;
 		lock_release(execv_lock);
-		return -1;
+		return result;
 	}
 
 	value_ptr = stackptr;
@@ -346,13 +405,31 @@ int sys_execv(const char *program, char **args, int *retval)
 	for(args_idx = 0; args_idx<n_args-1; args_idx++)
 	{
 		value_ptr = value_ptr - arg_len_arr[args_idx];
-		copyout(&value_ptr, (userptr_t)addr_ptr, 4);
+		err = copyout(&value_ptr, (userptr_t)addr_ptr, 4);
+		if(err)
+		{
+			lock_release(execv_lock);
+			*retval = err;
+			return err;
+		}
 		addr_ptr = addr_ptr+4;
-		copyout(&buffer[buff_idx],(userptr_t) value_ptr, arg_len_arr[args_idx]);
+		err = copyout(&buffer[buff_idx],(userptr_t) value_ptr, arg_len_arr[args_idx]);
+		if(err)
+		{
+			lock_release(execv_lock);
+			*retval = err;
+			return err;
+		}
 		buff_idx = buff_idx+arg_len_arr[args_idx];
 	}
 	
-	copyout(dummy2, (userptr_t)addr_ptr, 4);
+	err = copyout(dummy2, (userptr_t)addr_ptr, 4);
+	if(err)
+	{
+		lock_release(execv_lock);
+		*retval = err;
+		return err;
+	}
 
 	stackptr = d_stack_ptr;
 	
@@ -480,7 +557,8 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	}
 	if(status != NULL)
 	{
-		*status = calc_status;	
+		//*status = calc_status;	
+		*status = _MKWAIT_EXIT(child->exit_code); //Brute force: Please change it back
 	}
 	//Add the other two or three cases here. CHECK thread.c TO SEE IF THOSE PROVIDE CASES!
 	//Not sure how to handle __WSTOPPED...
@@ -663,6 +741,7 @@ void sys__exit(int exitcode)
 		lock_release(curproc->child_pids_lock);
 		//kprintf("KAMAL: Exiting thread pid value: %d\n",curproc->pid);
 		pt_remove(curproc->pid);
+		//_MKWAIT_EXIT(curproc->exit_code);
 		thread_exit();
 		return;//Code shouldn't even make it here.
 	}
