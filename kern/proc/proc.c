@@ -739,6 +739,7 @@ int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int
 
 int ft_lseek(int fd, off_t offset, int whence, struct file_table* ft, off_t* retval)
 {
+	//Need to use vop_isseekable on the file handle.
 	KASSERT(ft != NULL);
 	KASSERT(retval != NULL);
 	int err;
@@ -1026,8 +1027,13 @@ int fh_read(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 int fh_lseek(off_t offset, int whence, struct file_handle *fh, off_t *retval)
 {
 	int err = 0;
-	if(!strcmp(fh->file_name, "con:"))
+	if(!(strcmp(fh->file_name, "con:")))
 	{
+		err = ESPIPE;
+		*retval = ESPIPE;
+		return err;
+	}
+	if(!(VOP_ISSEEKABLE(fh->vnode))){
 		err = ESPIPE;
 		*retval = ESPIPE;
 		return err;

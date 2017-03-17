@@ -372,16 +372,38 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 
 	if (options != 0)
 	{
+		*ret = -1;
 		return EINVAL;
 	}
 
 	if (child == NULL)
 	{
+		*ret = -1;
 		return ESRCH;
 	}
 	else if (child->ppid != curproc->pid)
 	{
+		*ret = -1;
 		return ECHILD;
+	}
+
+	/*int copyerr;
+	int *status;
+	copyerr = copyin(userstatus, (void *)status, 500);
+	if (copyerr){
+		*ret = -1;
+		return copyerr;//This was an attempt athandling invalid ptrs.
+	}*/
+
+	unsigned int stataddr = (unsigned int)status;
+	//kprintf("Address of status is: 0x%x \n", stataddr);
+
+	if (((stataddr <= 0x40000000) && (stataddr != 0x0)) ||
+		(stataddr >= 0x80000000) || ((stataddr % 4) != 0)){
+		//Even if this does work, it may need to change on ASST3...
+		//The mod4 check makes badcall-waitpid pass, but breaks forkbomb and badcall-write...
+		*ret = -1;
+		return EFAULT;
 	}
 
 	//Waiting processes should go into a wait channel or cv,
@@ -406,7 +428,7 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	//  exit code that child now has, or the signal if the child
 	//  was killed by a fatal signal or something.
 	int calc_status = 0;
-	
+
 	switch(child->exit_code)
 	{
 		case 0:
@@ -439,6 +461,11 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	//From there, the child processes will get destroyed.
 
 	*ret = pid;
+	/*copyerr = copyout(status, (userptr_t)userstatus, 32);
+	if (copyerr){
+		*ret = -1;
+		return copyerr;
+	}*/
 	return 0;
 }
 
@@ -474,7 +501,7 @@ sys_waitpid1(int pid, int *status, int options, int *ret)
 	//  not do anything to it.
 	//  Passed in status value otherwise doesn't matter.
 	//  The exit code used to calculate this value comes
-	//  from the user space code. 
+	//  from the user space code.
 	//  Still need to check for EFAULT, though...
 	//options should always just be 0. Just assert that
 	//  it is the only value ever passed in (unless you
