@@ -18,7 +18,7 @@ uint32_t low32(uint64_t value);
 //Process syscalls. Should be in their own file...
 int sys_getpid(int *ret);
 int sys_fork(int *ret);
-unsigned sys_copyin_buffer(char *buffer, char *buff_ptr);
+unsigned sys_copyin_buffer(char *buffer, char *buff_ptr, unsigned *len);
 void print_padded_str(char *buffer, int len);
 int sys_execv(const char *, char **, int *);
 int sys_waitpid(int pid, int *status, int options, int *ret);

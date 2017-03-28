@@ -177,19 +177,23 @@ sys_fork(int *ret)
 	}
 }
 
-unsigned sys_copyin_buffer(char *buffer, char *buff_ptr)
+unsigned sys_copyin_buffer(char *buffer, char *buff_ptr, unsigned *len)
 {
 	KASSERT(buff_ptr != NULL);
 	KASSERT(buffer != NULL);
 	unsigned actual = 0;
-	unsigned len = 0;
+	int copyerr;
+	//unsigned len = 0; //I'm making this get passed by reference.
 	do
 	{
-		copyinstr((const_userptr_t) buff_ptr+len, buffer+len, PATH_MAX, &actual);
-		len = len+actual;
+		copyerr = copyinstr((const_userptr_t) buff_ptr+(*len), buffer+(*len), PATH_MAX, &actual);
+		if (copyerr){
+			return copyerr;
+		}
+		*len = (*len)+actual;
 	}while(actual == PATH_MAX);
 	//kprintf("KAMAL: Printing arg before padding: %s\n", buffer);
-	return len;
+	return copyerr;
 }
 
 void print_padded_str(char *buffer, int len)
@@ -221,53 +225,82 @@ int sys_execv(const char *program, char **args, int *retval)
 	}
 
 	//This check breaks execv, even though it works in waitpid.
-	/*unsigned int progaddr = (unsigned int)program;
-	unsigned int argsaddr = (unsigned int)args;
 
-	if ((progaddr <= 0x40000000) ||
-		(progaddr >= 0x80000000)){
+	//Must be because execv generally needs more space, especially for a large buffer.
+	//What if I check the buffer size...?
+	//Did we ever try copyin on the programname?
+	unsigned int progaddr = (unsigned int)program;
+	unsigned int argsaddr = (unsigned int)args;
+	//kprintf("progaddr: 0x%x \n", progaddr);
+	//kprintf("argsaddr: 0x%x \n", argsaddr);
+
+	if (((progaddr <= 0x40000000) && (progaddr >= 0x01000000)) ||//ISSUE: This may fail for a buffer size between 32K and 63K.
+		//EFAULT should probably only be thrown if a pointer is trying to reserve more space than it'll need.
+		//bigexec just so happens to reserve nearly all of the space from 0x0 to 0x80000000 (probably), so it gets by.
+		//It may be possible to resolve this with copyouts.
+		(progaddr >= 0x80000000) || ((progaddr % 4) != 0)){//May need to check this per index.
 		//Even if this does work, it may need to change on ASST3...
-		//The mod4 check makes badcall-waitpid pass, but breaks forkbomb and badcall-write...
-		*retval = -1;//TRY REMOVING THE CHECK FOR MOD 4! THESE ARE CHARS, NOT INTS! It didn't work...
+		*retval = -1;
 		return EFAULT;
 	}
 
-	if ((argsaddr <= 0x40000000) ||
-		(argsaddr >= 0x80000000)){
+	if (((argsaddr <= 0x40000000) && (argsaddr >= 0x01000000)) ||
+		(argsaddr >= 0x80000000) || ((argsaddr % 4) != 0)){
 		//Why didn't I write a funtion to do this? I was tired, okay?
 		*retval = -1;
 		return EFAULT;
-	}*/
+	}
 
+	//Simplified check: just make sure it isn't NULL. May need to do this for each arg. It is a problem if more than one NULL value is found.
+	if (program == NULL || args == NULL){
+		*retval = EFAULT;
+		return EFAULT;
+	}
+
+	/*
+	//Can try a copyin on program itself, but that should already be handled by args[0].
+	char progcheck[500];
+	copyerr = copyinstr((const_userptr_t)program, progcheck, 500);
+	*/
 
 	unsigned actual = 0;
-	
-
 	unsigned args_idx = 0;
 	unsigned buff_idx=0;
 	unsigned itr = 0;
+	int copyerr;
 
-	//This code may have assumed that every string would have a null terminator. An empty string would blow it.
 	lock_acquire(execv_lock);
-	//Must expect that this while loop never returns before finishing!
-	while(args[args_idx] != NULL)
+	//Must release the lock before returning anywhere!!
+	while(args[args_idx] != NULL)//You do not recieve argc. You must verify how many args there really are, or else you could stop early.
 	{
-		copyinstr((const_userptr_t)args[args_idx], &buffer[buff_idx], ARG_MAX, &actual);
+		copyerr = copyinstr((const_userptr_t)args[args_idx], &buffer[buff_idx], ARG_MAX, &actual);
+		if (copyerr){
+			*retval = -1;
+			lock_release(execv_lock);
+			return copyerr;
+		}
 		unsigned len = 0;
 		len = strlen(&buffer[buff_idx]);
-		//Extra check for totally empty string. ASSUMPTION: It should be allowed to pass no problem. (Test still failed)
-		if (len == 0){
+		//Extra check for totally empty string. (Test still failed, because the code below for n_extra works anyway.)
+		/*if (len == 0){
 			buffer[buff_idx] = '\0';
 			len++;
-		}
+		}*/
 		buff_idx = buff_idx+len;
 
-		/* Padding required emptys */
+		/* Padding required emptys. Done in between each arg string. */
+		//Since this relies on len, and works for 0, I have no idea why the code fails the empty string test.
 
 		unsigned n_extra = len/4;
 		n_extra = (n_extra+1)*4;
 		n_extra = n_extra - len;
 
+		//Should check for full buffer.
+		if ((buff_idx + n_extra) >= ARG_MAX){
+			*retval = -1;
+			lock_release(execv_lock);
+			return E2BIG;
+		}
 		for(itr = 0; itr<n_extra; itr++)
 		{
 			buffer[buff_idx+itr] = '\0';
@@ -280,7 +313,25 @@ int sys_execv(const char *program, char **args, int *retval)
 		args_idx++;
 	}
 
-	unsigned n_args = args_idx+1;
+	//Brute-force check to see if the very first char in args is '\0'.
+	//If it is, I think the syscall should fail.
+	if (buffer[0] == '\0'){
+		*retval = -1;
+		lock_release(execv_lock);
+		return EFAULT;
+	}
+
+	//Not a perfect check, since it doesn't consider added null chars.
+	//But, make sure there's nothing left in the args array.
+	//That would mean there was an extra NULL ptr in the args.
+	//May need to have a loop that counts how many chars are in the args array per character.
+	if (strlen(*args) >= buff_idx){
+		*retval = -1;
+		lock_release(execv_lock);
+		return EFAULT;
+	}
+
+	unsigned n_args = args_idx+1; //Used for finding lowest level of stack needed.
 	/*for(itr = 0; itr<n_args-1; itr++)
 	{
 		kprintf("%d \t",arg_len_arr[itr]);
@@ -291,7 +342,7 @@ int sys_execv(const char *program, char **args, int *retval)
 
 	vaddr_t value_ptr, addr_ptr, d_stack_ptr;
 
-	/* Open the file. */
+	// Open the file. AT THIS POINT, IF program IS AN INVALID POINTER, KERNEL CRASHES!
 	result = vfs_open((char *)program, O_RDONLY, 0, &v);
 	if (result) {
 		*retval = result;
@@ -337,11 +388,10 @@ int sys_execv(const char *program, char **args, int *retval)
 		return -1;
 	}
 
-	value_ptr = stackptr;
-	d_stack_ptr = stackptr - buff_idx - n_args*4;
+	value_ptr = stackptr;//Current position on stck (starts on top).
+	d_stack_ptr = stackptr - buff_idx - n_args*4;//Bottom of the stack.
 	addr_ptr = d_stack_ptr;
 
-	//May need to use a lock on this.
 	buff_idx = 0;
 	for(args_idx = 0; args_idx<n_args-1; args_idx++)
 	{
