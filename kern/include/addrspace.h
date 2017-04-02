@@ -103,6 +103,14 @@ struct addrspace {
  * functions are found in dumbvm.c.
  */
 
+//Coremap functions
+struct coremap {
+	uint32_t page_status;
+	uint32_t page_size;
+	uint32_t pid;
+}
+void		  coremap_init();
+
 struct addrspace *as_create(void);
 int               as_copy(struct addrspace *src, struct addrspace **ret);
 void              as_activate(void);

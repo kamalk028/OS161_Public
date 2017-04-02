@@ -50,6 +50,7 @@
 #include <test.h>
 #include <kern/test161.h>
 #include <version.h>
+#include <addrspace.h> //WE ADDED THIS FILE.
 #include "autoconf.h"  // for pseudoconfig
 
 
@@ -108,7 +109,11 @@ boot(void)
 
 	/* Early initialization. */
 	ram_bootstrap();
-	proc_bootstrap();
+
+	// Initialize the coremap. I ADDED THIS. This must be done during runtime.
+	coremap_init();
+
+	proc_bootstrap();//kmalloc and coremap must be ready by this point.
 	thread_bootstrap();
 	hardclock_bootstrap();
 	vfs_bootstrap();

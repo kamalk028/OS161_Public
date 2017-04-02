@@ -40,6 +40,30 @@
  * used. The cheesy hack versions in dumbvm.c are used instead.
  */
 
+//Coremap objects.
+static struct lock *cm_lock = NULL;//Memory must be allocated for the lock as well!
+static struct coremap *cm_entry = NULL;//Can initialze the coremap components later. //memsteal will later be used to make this an array.
+
+void
+coremap_init()
+{
+	int num_core_entries = mainbus_ramsize() / PAGE_SIZE;//Hopefully this computes the amount of memory we have.
+
+	unsigned long npages = (sizeof(*cm_entry) * num_core_entries) / PAGE_SIZE;
+	if (((sizeof(cm_entry) * num_core_entries) % PAGE_SIZE) != 0) { npages++; }//Calc the number of physical pages the core map requires.
+
+	cm_entry = ram_stealmem(npages);//We should never call this function again. It might even be bad to use it right now.
+
+	for (int i = 0; i < num_core_entries; i++)
+	{
+		cm_entry[i].page_status = 0; //This means free. NOTE: Memory already allocated at this point should NOT be labelled as free!!
+		cm_entry[i].page_size = PAGE_SIZE;
+		cm_entry[i].pid = 0;//Default value; normally assigned curproc->pid once memory is fixed.
+	}
+
+	return;
+}
+
 struct addrspace *
 as_create(void)
 {

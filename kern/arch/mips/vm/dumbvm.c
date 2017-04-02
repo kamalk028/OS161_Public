@@ -111,11 +111,11 @@ alloc_kpages(unsigned npages)
 	paddr_t pa;
 
 	dumbvm_can_sleep();
-	pa = getppages(npages);
+	pa = getppages(npages); //All this does is steal RAM.
 	if (pa==0) {
 		return 0;
 	}
-	return PADDR_TO_KVADDR(pa);
+	return PADDR_TO_KVADDR(pa); //All this does is add 0x80000000 to pa.
 }
 
 void

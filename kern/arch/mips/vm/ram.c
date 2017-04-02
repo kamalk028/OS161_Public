@@ -58,7 +58,7 @@ ram_bootstrap(void)
 	 * case we are going to worry about.
 	 */
 	if (ramsize > 512*1024*1024) {
-		ramsize = 512*1024*1024;
+		ramsize = 512*1024*1024;//This comes to 0x20000000.
 	}
 
 	lastpaddr = ramsize;
