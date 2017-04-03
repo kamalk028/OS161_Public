@@ -56,6 +56,7 @@ coremap_init()
 
 	for (int i = 0; i < num_core_entries; i++)
 	{
+		//KERNEL HANGS RIGHT HERE!! We probably need to do more to allocate the memory. All we have done is allocate the pages, not the smaller chunks of mem that kmalloc gives...
 		cm_entry[i].page_status = 0; //This means free. NOTE: Memory already allocated at this point should NOT be labelled as free!!
 		cm_entry[i].page_size = PAGE_SIZE;
 		cm_entry[i].pid = 0;//Default value; normally assigned curproc->pid once memory is fixed.
