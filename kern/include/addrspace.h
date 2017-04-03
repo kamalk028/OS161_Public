@@ -49,7 +49,7 @@ struct vnode;
  */
 
 struct addrspace {
-#if OPT_DUMBVM
+//#if OPT_DUMBVM
         vaddr_t as_vbase1;
         paddr_t as_pbase1;
         size_t as_npages1;
@@ -57,9 +57,9 @@ struct addrspace {
         paddr_t as_pbase2;
         size_t as_npages2;
         paddr_t as_stackpbase;
-#else
+//#else
         /* Put stuff here for your VM system */
-#endif
+//#endif
 };
 
 /*
@@ -108,8 +108,12 @@ struct coremap {
 	uint32_t page_status;
 	uint32_t page_size;
 	uint32_t pid;
-}
-void		  coremap_init();
+};
+void		  coremap_init(void);
+
+/* prototypes for vm functions */
+
+
 
 struct addrspace *as_create(void);
 int               as_copy(struct addrspace *src, struct addrspace **ret);
