@@ -98,7 +98,7 @@ coremap_init()
 	int num_core_entries = mainbus_ramsize() / PAGE_SIZE;//Hopefully this computes the amount of memory we have.
 
 	unsigned long npages = (sizeof(*cm_entry) * num_core_entries) / PAGE_SIZE;
-	if (((sizeof(cm_entry) * num_core_entries) % PAGE_SIZE) != 0) { npages++; }//Calc the number of physical pages the core map requires.
+	if (((sizeof(*cm_entry) * num_core_entries) % PAGE_SIZE) != 0) { npages++; }//Calc the number of physical pages the core map requires.
 
 	paddr_t pa = ram_stealmem(npages);//We should never call this function again. It might even be bad to use it right now.
 	if (pa==0) {
@@ -115,7 +115,7 @@ coremap_init()
 		cm_entry[i].pid = 0;//Default value; normally assigned curproc->pid once memory is fixed.
 	}
 
-	return;
+	return;//We still need to allocate memory for the lock.
 } 
 
 /* Copying dumbvm functions 
@@ -138,6 +138,7 @@ unsigned int coremap_used_bytes() {
 vaddr_t
 alloc_kpages(unsigned npages)
 {
+	//Taarget addresses can be calculated with cm_index * PAGE_SIZE.
 	paddr_t pa;
 
 	dumbvm_can_sleep();
