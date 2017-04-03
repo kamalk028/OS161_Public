@@ -52,11 +52,17 @@
  */
 
  #define DUMBVM_STACKPAGES    18
+ #define FREE_STATE 0
+ #define FIXED_STATE 1
+ #define DIRTY_STATE 2
+ #define CLEAN_STATE 3
 
 
 //Coremap objects.
-//static struct lock *cm_lock = NULL;//Memory must be allocated for the lock as well!
+static struct lock *cm_lock = NULL;//Memory must be allocated for the lock as well!
 static struct coremap *cm_entry = NULL;//Can initialze the coremap components later. //memsteal will later be used to make this an array.
+static int kern_pages = 0;
+static int npages_used = 0;
 
 static
 void
@@ -97,22 +103,59 @@ coremap_init()
 {
 	int num_core_entries = mainbus_ramsize() / PAGE_SIZE;//Hopefully this computes the amount of memory we have.
 
+	/*Manual memory allocation for core map :*/
 	unsigned long npages = (sizeof(*cm_entry) * num_core_entries) / PAGE_SIZE;
-	if (((sizeof(cm_entry) * num_core_entries) % PAGE_SIZE) != 0) { npages++; }//Calc the number of physical pages the core map requires.
+	if (((sizeof(*cm_entry) * num_core_entries) % PAGE_SIZE) != 0) { npages++; }//Calc the number of physical pages the core map requires.
 
 	paddr_t pa = ram_stealmem(npages);//We should never call this function again. It might even be bad to use it right now.
 	if (pa==0) {
 		panic("Mem allocation for coremap failed:::");
 	}
-
 	cm_entry = (struct coremap*)PADDR_TO_KVADDR(pa); //Change to kernel virtual address
 
-	for (int i = 0; i < num_core_entries; i++)
+	/*Memory allocation for coremap_lock:
+	unsigned int npages_lock = (sizeof(*cm_lock))/PAGE_SIZE;
+	if(sizeof(*cm_lock) > npages_lock * PAGE_SIZE)
 	{
-		cm_entry[i].page_status = 0; //This means free. NOTE: Memory already allocated at this point should NOT be labelled as free!!
-		cm_entry[i].page_size = PAGE_SIZE;
+		npages_lock++;
+	}
+	paddr_t lock_addr = ram_stealmem(npages_lock);//We are now allocating an entire page for the lock. Probably will need to change!
+	if (lock_addr==0) {
+		panic("Mem allocation for coremap failed:::");
+	}
+	cm_lock = (struct lock *) PADDR_TO_KVADDR(lock_addr);*/
+
+
+	paddr_t f_addr = pa + (npages*PAGE_SIZE);
+	int first_chunk = f_addr / PAGE_SIZE;
+	int i;
+
+	for(i = 0; i<first_chunk; i++)
+	{
+		cm_entry[i].page_status = FIXED_STATE;
+		cm_entry[i].npages = first_chunk;
+		cm_entry[i].pid = 1;//Special pid value for kernel involved memory.
+	}
+
+	for (i = first_chunk; i < num_core_entries; i++)
+	{
+		cm_entry[i].page_status = FREE_STATE; //This means free. NOTE: Memory already allocated at this point should NOT be labelled as free!!
+		cm_entry[i].npages = 0;
 		cm_entry[i].pid = 0;//Default value; normally assigned curproc->pid once memory is fixed.
 	}
+	npages_used = first_chunk;
+
+	cm_lock = lock_create("coremap_lock"); // Is it safe to call kmalloc here? 
+
+	f_addr = coremap_used_bytes() - f_addr;
+	int npages_lock = f_addr/PAGE_SIZE;
+
+	for(i = first_chunk; i < first_chunk+npages_lock; i++)
+	{
+		cm_entry[i].pid = 1;//Special pid value for kernel involved memory.
+	}
+
+	kern_pages = first_chunk + npages_lock; //Use this to make alloc_kpages more efficient.
 
 	return;
 } 
@@ -130,8 +173,7 @@ vm_bootstrap(void)
 unsigned int coremap_used_bytes() {
 
 	/* dumbvm doesn't track page allocations. Return 0 so that khu works. */
-
-	return 0;
+	return npages_used * PAGE_SIZE;
 }
 
 vaddr_t
@@ -144,6 +186,7 @@ alloc_kpages(unsigned npages)
 	if (pa==0) {
 		return 0;
 	}
+	npages_used+=npages;
 	return PADDR_TO_KVADDR(pa); //All this does is add 0x80000000 to pa.
 }
 
