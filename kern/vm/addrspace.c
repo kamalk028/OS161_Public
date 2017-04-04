@@ -59,10 +59,13 @@
 
 
 //Coremap objects.
-static struct lock *cm_lock = NULL;//Memory must be allocated for the lock as well!
+//static struct lock *cm_lock = NULL;//Memory must be allocated for the lock as well!
 static struct coremap *cm_entry = NULL;//Can initialze the coremap components later. //memsteal will later be used to make this an array.
-static int kern_pages = 0;
-static int npages_used = 0;
+static unsigned int kern_pages = 0;
+static unsigned int npages_used = 0;
+static unsigned int total_npages = 0;
+static struct spinlock cm_splk;
+
 
 static
 void
@@ -82,12 +85,63 @@ paddr_t
 getppages(unsigned long npages)
 {
 	paddr_t addr;
+	/*bool is_lock_created = cm_lock != NULL;
 
-	//spinlock_acquire(&stealmem_lock);
+	if(is_lock_created)
+	{
+	lock_acquire(cm_lock);
+	}*/
+	spinlock_acquire(&cm_splk);
 
-	addr = ram_stealmem(npages);
+	unsigned long i=kern_pages;
+	unsigned long cont_pages = 0;
 
-	//spinlock_release(&stealmem_lock);
+	while(i<total_npages && cont_pages < npages)
+	{ 
+		if(cm_entry[i].page_status == FREE_STATE)
+		{
+			cont_pages++;
+		}
+		else
+		{
+			cont_pages = 0;
+		}
+		i++;
+	}
+	if(i == total_npages)
+	{
+		return 0; //TODO: check with TA if we can return 0 or something else
+	}
+	else
+	{
+		i = i - (npages);//Change i to first open index.
+		addr = i * PAGE_SIZE;
+		while(cont_pages > 0)
+		{
+			cm_entry[i].page_status = FIXED_STATE;
+			cm_entry[i].npages = npages;
+			if(CURCPU_EXISTS())
+			{
+				cm_entry[i].pid = curproc->pid;
+			}
+			else
+			{
+				kern_pages++;
+				cm_entry[i].pid = 1;
+			}
+			i++;
+			cont_pages--;
+		}
+	}
+
+	npages_used+=npages;
+
+	spinlock_release(&cm_splk);
+	/*if(is_lock_created)
+	{
+	lock_release(cm_lock);
+	}*/
+
 	return addr;
 }
 
@@ -111,7 +165,9 @@ coremap_init()
 	if (pa==0) {
 		panic("Mem allocation for coremap failed:::");
 	}
-	cm_entry = (struct coremap*)PADDR_TO_KVADDR(pa); //Change to kernel virtual address
+	paddr_t pa_temp = pa;
+	cm_entry = (struct coremap*)PADDR_TO_KVADDR(pa_temp); //Change to kernel virtual address
+	total_npages = num_core_entries;
 
 	/*Memory allocation for coremap_lock:
 	unsigned int npages_lock = (sizeof(*cm_lock))/PAGE_SIZE;
@@ -144,18 +200,10 @@ coremap_init()
 		cm_entry[i].pid = 0;//Default value; normally assigned curproc->pid once memory is fixed.
 	}
 	npages_used = first_chunk;
+	kern_pages = first_chunk;
 
-	cm_lock = lock_create("coremap_lock"); // Is it safe to call kmalloc here? 
-
-	f_addr = coremap_used_bytes() - f_addr;
-	int npages_lock = f_addr/PAGE_SIZE;
-
-	for(i = first_chunk; i < first_chunk+npages_lock; i++)
-	{
-		cm_entry[i].pid = 1;//Special pid value for kernel involved memory.
-	}
-
-	kern_pages = first_chunk + npages_lock; //Use this to make alloc_kpages more efficient.
+	//cm_lock = lock_create("coremap_lock"); // Is it safe to call kmalloc here? 
+	spinlock_init(&cm_splk);
 
 	return;
 } 
@@ -182,11 +230,10 @@ alloc_kpages(unsigned npages)
 	paddr_t pa;
 
 	dumbvm_can_sleep();
-	pa = getppages(npages); //All this does is steal RAM.
+	pa = getppages(npages); //All this does is steal RAM. //This should return a physical address
 	if (pa==0) {
 		return 0;
 	}
-	npages_used+=npages;
 	return PADDR_TO_KVADDR(pa); //All this does is add 0x80000000 to pa.
 }
 
