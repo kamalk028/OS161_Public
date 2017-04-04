@@ -106,7 +106,7 @@ struct addrspace {
 //Coremap functions
 struct coremap {
 	uint32_t page_status;
-	uint32_t page_size;
+	uint32_t npages;
 	uint32_t pid;
 };
 void		  coremap_init(void);
