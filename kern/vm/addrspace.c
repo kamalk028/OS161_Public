@@ -91,7 +91,11 @@ getppages(unsigned long npages)
 	{
 	lock_acquire(cm_lock);
 	}*/
-	spinlock_acquire(&cm_splk);
+
+	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
+	{
+		spinlock_acquire(&cm_splk);
+	}
 
 	unsigned long i=kern_pages;
 	unsigned long cont_pages = 0;
@@ -136,7 +140,10 @@ getppages(unsigned long npages)
 
 	npages_used+=npages;
 
-	spinlock_release(&cm_splk);
+	if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
+	{
+		spinlock_release(&cm_splk);
+	}
 	/*if(is_lock_created)
 	{
 	lock_release(cm_lock);
@@ -221,7 +228,16 @@ vm_bootstrap(void)
 unsigned int coremap_used_bytes() {
 
 	/* dumbvm doesn't track page allocations. Return 0 so that khu works. */
-	return npages_used * PAGE_SIZE;
+	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
+	{
+		spinlock_acquire(&cm_splk);
+	}
+	unsigned int bytes = npages_used * PAGE_SIZE;
+	if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
+	{
+		spinlock_release(&cm_splk);
+	}
+	return bytes;
 }
 
 vaddr_t
@@ -247,9 +263,35 @@ vm_tlbshootdown(const struct tlbshootdown *ts)
 void
 free_kpages(vaddr_t addr)
 {
-	/* nothing - leak the memory. */
+	paddr_t p_addr = addr - MIPS_KSEG0;
+	unsigned int i = p_addr/PAGE_SIZE;
+	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
+	{
+		spinlock_acquire(&cm_splk);
+	}
+	int chunk = cm_entry[i].npages;
+	int temp_chunk = chunk;
+	while(chunk > 0)
+	{
+		KASSERT(cm_entry[i].pid != 1);
+		KASSERT(cm_entry[i].page_status != FREE_STATE);
+		cm_entry[i].page_status = FREE_STATE;
+		cm_entry[i].npages = 0;
+		/*if(CURCPU_EXISTS())
+		{
+			//KASSERT(cm_entry[i].pid == curproc->pid);
+		}*/
+		cm_entry[i].pid = 0;
 
-	(void)addr;
+		i++;
+		chunk--;
+	}
+	npages_used-=temp_chunk;
+	if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
+	{
+		spinlock_release(&cm_splk);
+	}
+	
 }
 
 int
