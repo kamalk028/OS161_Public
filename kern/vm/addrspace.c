@@ -81,11 +81,12 @@ static
 paddr_t
 getppages(unsigned long npages)
 {
+	//as_prepare_load also calls this function, not just alloc_kpages.
 	paddr_t addr;
 
 	//spinlock_acquire(&stealmem_lock);
 
-	addr = ram_stealmem(npages);
+	addr = ram_stealmem(npages);//This is the only function, besides our coremap initialization, that calls ram_stealmem.
 
 	//spinlock_release(&stealmem_lock);
 	return addr;
