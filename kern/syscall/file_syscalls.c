@@ -995,6 +995,28 @@ uint32_t high32(uint64_t value)
 	return value >> 32;
 }
 
+uint32_t get_and_n(unsigned n)
+{
+	unsigned val=1;
+	for(unsigned i=0; i<n; i++)
+	{
+		val *= 2;
+	}
+	return val - 1;
+}
+
+uint32_t get_first_n(uint32_t value, unsigned n)
+{
+	return value >> n & get_and_n(n);
+}
+
+uint32_t get_last_n(uint32_t value, int n)
+{
+	return value & get_and_n(n);
+}
+
+
+
 uint32_t low32(uint64_t value)
 {
 	return value;

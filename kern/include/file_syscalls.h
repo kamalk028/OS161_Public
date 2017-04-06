@@ -13,6 +13,9 @@ int sys_read(int fd, void* buff, size_t len, int* ret);
 int sys_lseek(int fd, off_t offset, int whence, off_t* ret);
 uint64_t to64(uint32_t high, uint32_t low);
 uint32_t high32(uint64_t value);
+uint32_t get_and_n(unsigned n);
+uint32_t get_first_n(uint32_t value, unsigned n);
+uint32_t get_last_n(uint32_t value, int n);
 uint32_t low32(uint64_t value);
 
 //Process syscalls. Should be in their own file...
