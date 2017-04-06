@@ -1082,6 +1082,42 @@ int fh_lseek(off_t offset, int whence, struct file_handle *fh, off_t *retval)
 }
 
 /*
+    Create a page table for a process.
+*/
+struct page_table *pt_create()
+{
+	struct page_table *pt;
+	pt = kmalloc(sizeof(*pt));
+	pt->pt_array = array_create();
+	array_init(pt->pt_array);
+	return pt;
+}
+
+/*
+	Create an entry in a page table.
+	For now, we assume that whatever calls this function will know the values of all parameters.
+	Eventually, we may want to change this function so that it does the work.
+*/
+struct page_table_entry *pte_create(uint32_t vpn, uint32_t ppn, uint8_t pm, bool state, bool valid, bool ref)
+{
+	struct page_table_entry *pte;
+	pte = kmalloc(sizeof(*pte));
+
+	pte->vpn = vpn;
+	pte->ppn = ppn;
+	pte->permission = pm;
+	pte->state = state;
+	pte->valid = valid;
+	pte->ref = ref;
+	return pte;
+}
+
+/*paddr_t pt_lookup(uint32_t va, uint8_t pm)
+{
+	//Write this!
+}*/
+
+/*
 Function copies all the members of the src_tf to dest_tf:
 */
 void copy_trapframe(struct trapframe *src_tf, struct trapframe *dest_tf)

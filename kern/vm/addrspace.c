@@ -61,9 +61,9 @@
 //Coremap objects.
 //static struct lock *cm_lock = NULL;//Memory must be allocated for the lock as well!
 static struct coremap *cm_entry = NULL;//Can initialze the coremap components later. //memsteal will later be used to make this an array.
-static unsigned int kern_pages = 0;
-static unsigned int npages_used = 0;
-static unsigned int total_npages = 0;
+static unsigned int kern_pages = 0;//Total number of physical pages the kernel has used before and during coremap initilization.
+static unsigned int npages_used = 0;//Total number of coremap pages used by all processes.
+static unsigned int total_npages = 0;//Total number of pages in the core map.
 static struct spinlock cm_splk;
 
 
@@ -84,6 +84,7 @@ static
 paddr_t
 getppages(unsigned long npages)
 {
+	//as_prepare_load also calls this function, not just alloc_kpages.
 	paddr_t addr;
 	/*bool is_lock_created = cm_lock != NULL;
 
@@ -114,7 +115,7 @@ getppages(unsigned long npages)
 	}
 	if(i == total_npages)
 	{
-		return 0; //TODO: check with TA if we can return 0 or something else
+		return 0; //TODO: check with TA if we can return 0 or something else. For 3.3, we will call page swapping code here.
 	}
 	else
 	{
@@ -202,7 +203,7 @@ coremap_init()
 
 	for (i = first_chunk; i < num_core_entries; i++)
 	{
-		cm_entry[i].page_status = FREE_STATE; //This means free. NOTE: Memory already allocated at this point should NOT be labelled as free!!
+		cm_entry[i].page_status = FREE_STATE;
 		cm_entry[i].npages = 0;
 		cm_entry[i].pid = 0;//Default value; normally assigned curproc->pid once memory is fixed.
 	}
@@ -243,6 +244,7 @@ unsigned int coremap_used_bytes() {
 vaddr_t
 alloc_kpages(unsigned npages)
 {
+	//Taarget addresses can be calculated with cm_index * PAGE_SIZE.
 	paddr_t pa;
 
 	dumbvm_can_sleep();
@@ -264,7 +266,7 @@ void
 free_kpages(vaddr_t addr)
 {
 	paddr_t p_addr = addr - MIPS_KSEG0;
-	unsigned int i = p_addr/PAGE_SIZE;
+	unsigned int i = p_addr/PAGE_SIZE;// i is assumed to be the index of the first coremap entry used by the process.
 	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
 	{
 		spinlock_acquire(&cm_splk);

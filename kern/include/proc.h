@@ -90,6 +90,23 @@ int fh_write(void *buff, size_t bufflen, struct file_handle *fh, int *retval);
 int fh_read(void* buff, size_t bufflen, struct file_handle* fh, int* retval);
 int fh_lseek(off_t offset, int whence, struct file_handle *fh, off_t *retval);
 
+/*Page Table Declaration*/
+struct page_table {
+	struct array *pt_array;
+};
+struct page_table* pt_create(void);
+
+struct page_table_entry {
+	uint32_t vpn;//Only need first 20 bits.
+	uint32_t ppn;
+	uint8_t permission; //Can contain values 0-7.
+	bool state;
+	bool valid;
+	bool ref;//Used later for swapping algo.
+};
+struct page_table_entry *pte_create(uint32_t vnp, uint32_t ppn, uint8_t pm, bool state, bool valid, bool ref);
+//paddr_t pt_lookup(vaddr_t va, uint8_t pm);//To pull the first three bits of pm only, & it with 00000111.
+
 
 /*
  * Process structure.

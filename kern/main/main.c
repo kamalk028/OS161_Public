@@ -113,7 +113,7 @@ boot(void)
 	// Initialize the coremap. I ADDED THIS. This must be done during runtime.
 	coremap_init();
 
-	proc_bootstrap();//kmalloc and coremap must be ready by this point.
+	proc_bootstrap();
 	thread_bootstrap();
 	hardclock_bootstrap();
 	vfs_bootstrap();
@@ -130,7 +130,7 @@ boot(void)
 	kheap_nextgeneration();
 
 	/* Late phase of initialization. */
-	vm_bootstrap();
+	vm_bootstrap();//kmalloc and coremap must be ready by this point.
 	kprintf_bootstrap();
 	thread_start_cpus();
 	test161_bootstrap();

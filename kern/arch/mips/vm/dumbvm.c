@@ -108,6 +108,7 @@ getppages(unsigned long npages)
 vaddr_t
 alloc_kpages(unsigned npages)
 {
+	//We will want to change this so that is looks for n consecutive free pages, and returns an error or something if that cannot be found.
 	paddr_t pa;
 
 	dumbvm_can_sleep();
@@ -122,7 +123,8 @@ void
 free_kpages(vaddr_t addr)
 {
 	/* nothing - leak the memory. */
-
+	//Not only must the core map be updated when this is called, but also, the memory must be freed for re-use.
+	//Memory will be allocated simply by providing addresses to processes. How will it be freed?
 	(void)addr;
 }
 
