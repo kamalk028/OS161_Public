@@ -49,7 +49,7 @@ struct vnode;
  */
 
 struct addrspace {
-//#if OPT_DUMBVM
+#if OPT_DUMBVM
         vaddr_t as_vbase1;
         paddr_t as_pbase1;
         size_t as_npages1;
@@ -57,9 +57,23 @@ struct addrspace {
         paddr_t as_pbase2;
         size_t as_npages2;
         paddr_t as_stackpbase;
-//#else
-        /* Put stuff here for your VM system */
-//#endif
+#else
+	//There should be any number of segments! Track start, size, and permission for each region!
+	//Each process has its own page table, so they can afford to have an array of memory regions!
+
+	struct array *as_regions;
+	vaddr_t stack_start; //Will be set to USERSTACK (or 0x7fffffff), and grows down with each as_define_region call.
+	//vaddr_t heap_start; //We can define this here once we know for certain what to do with it.
+	struct page_table *pt; //Starts out empty, doesn't get filled until vm_fault calls occur.
+#endif
+};
+
+struct as_region {
+	vaddr_t start; //First region always begins at vaddr 0x00000000.
+	size_t size; //Number of virtual pages the region gets.
+	uint8_t permission; //Any mix of read, write, execute.
+	vaddr_t stack; //Statically-sized stack for the region to use.
+	//vaddr_t heap_start; //We may just need a heap and stack per address region later...
 };
 
 /*
