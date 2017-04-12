@@ -70,9 +70,10 @@ struct addrspace {
 
 struct as_region {
 	vaddr_t start; //First region always begins at vaddr 0x00000000.
+	vaddr_t end;
 	size_t size; //Number of virtual pages the region gets.
 	uint8_t permission; //Any mix of read, write, execute.
-	vaddr_t stack; //Statically-sized stack for the region to use.
+	//vaddr_t stack; //Statically-sized stack for the region to use.
 	//vaddr_t heap_start; //We may just need a heap and stack per address region later...
 };
 

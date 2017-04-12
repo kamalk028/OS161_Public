@@ -405,8 +405,12 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	int i;
 	uint32_t ehi, elo;
 	struct addrspace *as;
+	struct as_region *as_region;
 	int spl;
 	bool valid_addr = 0;
+	int err; //Error code for pt_lookup.
+	uint32_t vpn = NULL;
+	uint32_t ppn = NULL; //Used for page tabe lookup.
 
 	faultaddress &= PAGE_FRAME; //This effectively chops off 12 bits of faultaddress.
 
@@ -453,6 +457,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		if(faultaddress >= start && faultaddress < end)
 		{
 			valid_addr = 1;
+			as_region = array_get(as->as_regions, i);
 			break;
 		}
 	}
@@ -470,9 +475,20 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		return EFAULT;
 	}
 
-		
+	vpn = faultaddress & 42949631999; //Chops off last twelve bits of faultaddress. (2^32 - 2^12)
+	err = pt_lookup(as->pt, vpn, as_region->permission, &ppn);
 
+	if (err)
+	{
+		vaddr_t copy_fa = kmalloc(PAGE_SIZE);
+		ppn = copy_fa - MIPS_KSEG0;
+		struct page_table_entry *pte = pte_create(vpn, ppn, as_region->permission, 1, 1, 0);
+		pt_append(as->pt, pte);
+	}
 
+	paddr = ppn; //We didn;t want to change TLB-related code.
+
+	//Update the tlb.
 	for (i=0; i<NUM_TLB; i++) {
 		tlb_read(&ehi, &elo, i);
 		if (elo & TLBLO_VALID) {
@@ -486,7 +502,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		return 0;
 	}
 
-	kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
+	kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");//CHANGE THIS!
 	splx(spl);
 	return EFAULT;
 

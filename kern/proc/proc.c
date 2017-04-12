@@ -1093,6 +1093,12 @@ struct page_table *pt_create()
 	return pt;
 }
 
+int pt_append(struct page_table *pt, struct page_table_entry *pte)
+{
+	unsigned int idx = 0;
+	return array_add(pt->pt_array, pte, &idx);
+}
+
 /*
 	Create an entry in a page table.
 	For now, we assume that whatever calls this function will know the values of all parameters.
@@ -1110,6 +1116,31 @@ struct page_table_entry *pte_create(uint32_t vpn, uint32_t ppn, uint8_t pm, bool
 	pte->valid = valid;
 	pte->ref = ref;
 	return pte;
+}
+
+int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn)
+{
+	(void)pm;
+	int num = array_num(pt->pt_array);
+	//bool has_entry = 0;
+	for (int i = 0; i<num; i++)
+	{
+		struct page_table_entry *pte = array_get(pt->pt_array, i);
+		if(vpn == pte->vpn)
+		{
+			if(pte->valid)
+			{
+				*ppn = pte->ppn;
+				pte->ref = 1;
+				return 0;
+			} 
+		}
+		else
+		{
+			pte->ref = 0;//While implementing swapping, CHANGE THIS FUNCTION so that it starts the lookup where the last one left off.
+		}
+	}
+	return -1; //This means no page table entry for given vpn 
 }
 
 /*paddr_t pt_lookup(uint32_t va, uint8_t pm)
