@@ -537,14 +537,14 @@ as_create(void)
 	/*
 	 * Our new stuff:
 	 */
-	
+
 	as->as_regions = array_create();
 	array_init(as->as_regions);
 	//as->next_start = 0x00000000; //We were originally going to disallow the passing of vaddr into define_region().
 	//as->stack_start = USERSTACK; //Default 0x7fffffff, I think.
 	as->pt = pt_create(); //This effectively initializes an array.
 	//May add heap declaration here, as well.
-	 
+
 	return as;
 }
 
@@ -552,7 +552,7 @@ as_create(void)
 int
 as_copy(struct addrspace *old, struct addrspace **ret)
 {
-/*	struct addrspace *newas;
+	struct addrspace *newas;
 
 	newas = as_create();
 	if (newas==NULL) {
@@ -562,7 +562,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 
 	   //Old dumbvm code.
 
-	newas->as_vbase1 = old->as_vbase1;
+/*	newas->as_vbase1 = old->as_vbase1;
 	newas->as_npages1 = old->as_npages1;
 	newas->as_vbase2 = old->as_vbase2;
 	newas->as_npages2 = old->as_npages2;
@@ -591,16 +591,17 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 
 	*ret = newas;
 	return 0;
-	
+
 */
 	/*
 	 * Our new code:
 	 */
 
-
+	//struct as_region *r;
+	//struct page_table_entry *pte;//NOT SURE IF PHYSICAL ADDRESSES SHOULD BE COPIED WHEN COPYING PAGES!
 	(void)old;
 	(void)*ret;
-	// *ret = newas;
+	 *ret = newas;
 	return 0;
 }
 
@@ -608,17 +609,25 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 void
 as_destroy(struct addrspace *as)
 {
+	//This function originally did almost nothing, and probably leaked a lot of each process' memory.
 	dumbvm_can_sleep();
 	struct as_region *r;
+	struct page_table_entry *pte;
 	//Free all memory regions before freeing the address space.
 	while(array_num(as->as_regions))
 	{
 		r = array_get(as->as_regions, 0);
-		kfree(r);//This will only free the attributes of each region, NOT their address spaces...
+		kfree(r);//This will only free the attributes of each region, NOT their process' memory.
 		array_remove(as->as_regions, 0);//Removing the first shifts the rest down.
 	}
-	//  TODO:
 	//All physical pages held by the address space must be set to free! Scan the page table!
+	while(array_num(as->pt->pt_array))
+	{
+		pte = array_get(as->pt->pt_array, 0);
+		free_kpages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
+		kfree(pte);
+		array_remove(as->pt->pt_array, 0);
+	}
 	kfree(as);
 }
 
