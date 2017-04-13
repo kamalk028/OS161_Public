@@ -100,12 +100,13 @@ struct page_table_entry {
 	uint32_t vpn;//Only need first 20 bits.
 	uint32_t ppn;
 	uint8_t permission; //Can contain values 0-7.
-	bool state;
-	bool valid;
+	bool state;//In memory or on disk? 1 for in memory.
+	bool valid;//Has a physical page been allocated yet?
 	bool ref;//Used later for swapping algo.
 };
 struct page_table_entry *pte_create(uint32_t vnp, uint32_t ppn, uint8_t pm, bool state, bool valid, bool ref);
-//paddr_t pt_lookup(vaddr_t va, uint8_t pm);//To pull the first three bits of pm only, & it with 00000111.
+int pt_lookup(struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn);//To pull the first three bits of pm only, & it with 00000111.
+int pt_append(struct page_table *pt, struct page_table_entry *pte);
 
 
 /*

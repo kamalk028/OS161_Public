@@ -153,12 +153,12 @@ getppages(unsigned long npages)
 	return addr;
 }
 
-static
+/*static
 void
 as_zero_region(paddr_t paddr, unsigned npages)
 {
 	bzero((void *)PADDR_TO_KVADDR(paddr), npages * PAGE_SIZE);
-}
+}*/
 
 void
 coremap_init()
@@ -248,7 +248,7 @@ alloc_kpages(unsigned npages)
 	paddr_t pa;
 
 	dumbvm_can_sleep();
-	pa = getppages(npages); //All this does is steal RAM. //This should return a physical address
+	pa = getppages(npages); //This should return a physical address, and no longer just "steal" memory.
 	if (pa==0) {
 		return 0;
 	}
@@ -299,6 +299,7 @@ free_kpages(vaddr_t addr)
 int
 vm_fault(int faulttype, vaddr_t faultaddress)
 {
+	/*
 	vaddr_t vbase1, vtop1, vbase2, vtop2, stackbase, stacktop;
 	paddr_t paddr;
 	int i;
@@ -312,7 +313,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	switch (faulttype) {
 	    case VM_FAULT_READONLY:
-		/* We always create pages read-write, so we can't get this */
+		// We always create pages read-write, so we can't get this.
 		panic("dumbvm: got VM_FAULT_READONLY\n");
 	    case VM_FAULT_READ:
 	    case VM_FAULT_WRITE:
@@ -322,24 +323,24 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	}
 
 	if (curproc == NULL) {
-		/*
-		 * No process. This is probably a kernel fault early
-		 * in boot. Return EFAULT so as to panic instead of
-		 * getting into an infinite faulting loop.
-		 */
+		
+		//  No process. This is probably a kernel fault early
+		//  in boot. Return EFAULT so as to panic instead of
+		//  getting into an infinite faulting loop.
+		 
 		return EFAULT;
 	}
 
 	as = proc_getas();
 	if (as == NULL) {
-		/*
-		 * No address space set up. This is probably also a
-		 * kernel fault early in boot.
-		 */
+		
+		 // No address space set up. This is probably also a
+		 // kernel fault early in boot.
+		 
 		return EFAULT;
 	}
 
-	/* Assert that the address space has been set up properly. */
+	// Assert that the address space has been set up properly. 
 	KASSERT(as->as_vbase1 != 0);
 	KASSERT(as->as_pbase1 != 0);
 	KASSERT(as->as_npages1 != 0);
@@ -373,10 +374,10 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		return EFAULT;
 	}
 
-	/* make sure it's page-aligned */
+	// make sure it's page-aligned.
 	KASSERT((paddr & PAGE_FRAME) == paddr);
 
-	/* Disable interrupts on this CPU while frobbing the TLB. */
+	// Disable interrupts on this CPU while frobbing the TLB.
 	spl = splhigh();
 
 	for (i=0; i<NUM_TLB; i++) {
@@ -395,15 +396,120 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
 	splx(spl);
 	return EFAULT;
+	*/
+
+
+	//vaddr_t vbase1, vtop1, vbase2, vtop2, stackbase, stacktop;
+	//vaddr_t stackbase, stacktop;
+	paddr_t paddr; //Used only as a value for getppages to fill.
+	unsigned int i;
+	uint32_t ehi, elo;
+	struct addrspace *as;
+	struct as_region *as_region;
+	int spl;
+	bool valid_addr = 0;
+	int err; //Error code for pt_lookup.
+	uint32_t vpn = 0;
+	uint32_t ppn = 0; //Used for page tabe lookup.
+
+	faultaddress &= PAGE_FRAME; //This effectively chops off 12 bits of faultaddress.
+
+	DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
+
+	switch (faulttype) {
+		//For now, we will ignore this. faulttype may not matter?
+	    case VM_FAULT_READONLY:
+	    case VM_FAULT_READ:
+	    case VM_FAULT_WRITE:
+		break;
+	    default:
+		return EINVAL;
+	}
+
+	if (curproc == NULL) {
+
+		//  No process. This is probably a kernel fault early
+		//  in boot. Return EFAULT so as to panic instead of
+		//  getting into an infinite faulting loop.
+
+		return EFAULT;
+	}
+
+	as = proc_getas();
+	if (as == NULL) {
+
+		 // No address space set up. This is probably also a
+		 // kernel fault early in boot.
+
+		return EFAULT;
+	}
+
+	// Assert that the address space has been set up properly.
+	for (i = 0; i < array_num(as->as_regions); i++)
+	{
+		struct as_region *r = array_get(as->as_regions, i);
+		KASSERT(r->start != 0);
+		KASSERT(r->end != 0);
+		KASSERT(r->size != 0);
+		KASSERT((r->start & PAGE_FRAME) == r->start);
+		KASSERT((r->end & PAGE_FRAME) == r->end);
+		if(faultaddress >= r->start && faultaddress < r->end)
+		{
+			valid_addr = 1;
+			as_region = array_get(as->as_regions, i);
+			break;
+		}
+	}
+
+	//I made the stack a full-fledged as_region, so this isn't needed anymore.
+	/*stackbase = USERSTACK - DUMBVM_STACKPAGES * PAGE_SIZE;
+	stacktop = USERSTACK; // CHANGE THIS IF YOU CHANGE STACK ALLOCATION!
+
+	if (faultaddress >= stackbase && faultaddress < stacktop) {
+		//paddr = (faultaddress - stackbase) + as->as_stackpbase;
+		valid_addr = 1;
+	}
+	*/
+
+	if(!valid_addr)
+	{
+		return EFAULT;
+	}
+
+	vpn = faultaddress & 42949631999; //Chops off last twelve bits of faultaddress. (2^32 - 2^12 - 1)
+	err = pt_lookup(as->pt, vpn, as_region->permission, &ppn);
+
+	if (err)//If no pte was found, allocate some physical memory.
+	{
+		paddr = getppages(1);
+		//ppn = copy_fa - MIPS_KSEG0;
+		ppn = paddr & 42949631999;
+		struct page_table_entry *pte = pte_create(vpn, ppn, as_region->permission, 1, 1, 0);
+		pt_append(as->pt, pte);
+	}
+
+	paddr = ppn; //We didn't want to change TLB-related code, which took the paddr as a page num.
+
+	//Update the tlb.
+	spl = splhigh();
+	for (i=0; i<NUM_TLB; i++) {
+		tlb_read(&ehi, &elo, i);
+		if (elo & TLBLO_VALID) {
+			continue;
+		}
+		ehi = faultaddress;
+		elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
+		DEBUG(DB_VM, "dumbvm: 0x%x -> 0x%x\n", faultaddress, paddr);
+		tlb_write(ehi, elo, i);
+		splx(spl);
+		return 0;
+	}
+
+	kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");//CHANGE THIS EVENTUALLY!!
+	splx(spl);
+	return EFAULT;
+
 }
-
-
-/*
- * Address space functions are copied from dumbvm.c
-*/
-
-
-
 
 struct addrspace *
 as_create(void)
@@ -412,12 +518,13 @@ as_create(void)
 
 	as = kmalloc(sizeof(struct addrspace));
 	if (as == NULL) {
-		return NULL;
+		return NULL;//May want to return another error instead?
 	}
 
 	/*
-	 * Initialize as needed.
+	 * Old dumbvm initializations:
 	 */
+	/*
 	as->as_vbase1 = 0;
 	as->as_pbase1 = 0;
 	as->as_npages1 = 0;
@@ -425,26 +532,42 @@ as_create(void)
 	as->as_pbase2 = 0;
 	as->as_npages2 = 0;
 	as->as_stackpbase = 0;
+	*/
 
+	/*
+	 * Our new stuff:
+	 */
+	
+	as->as_regions = array_create();
+	array_init(as->as_regions);
+	//as->next_start = 0x00000000; //We were originally going to disallow the passing of vaddr into define_region().
+	//as->stack_start = USERSTACK; //Default 0x7fffffff, I think.
+	as->pt = pt_create(); //This effectively initializes an array.
+	//May add heap declaration here, as well.
+	 
 	return as;
 }
+
 
 int
 as_copy(struct addrspace *old, struct addrspace **ret)
 {
-	struct addrspace *newas;
+/*	struct addrspace *newas;
 
 	newas = as_create();
 	if (newas==NULL) {
 		return ENOMEM;
 	}
 
+
+	   //Old dumbvm code.
+
 	newas->as_vbase1 = old->as_vbase1;
 	newas->as_npages1 = old->as_npages1;
 	newas->as_vbase2 = old->as_vbase2;
 	newas->as_npages2 = old->as_npages2;
 
-	/* (Mis)use as_prepare_load to allocate some physical memory. */
+	// (Mis)use as_prepare_load to allocate some physical memory.
 	if (as_prepare_load(newas)) {
 		as_destroy(newas);
 		return ENOMEM;
@@ -468,24 +591,34 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 
 	*ret = newas;
 	return 0;
+	
+*/
 	/*
-	 * Write this.
+	 * Our new code:
 	 */
 
 
-	/*(void)old;
-
-	*ret = newas;
-	return 0;*/
+	(void)old;
+	(void)*ret;
+	// *ret = newas;
+	return 0;
 }
+
 
 void
 as_destroy(struct addrspace *as)
 {
-	/*
-	 * Clean up as needed.
-	 */
 	dumbvm_can_sleep();
+	struct as_region *r;
+	//Free all memory regions before freeing the address space.
+	while(array_num(as->as_regions))
+	{
+		r = array_get(as->as_regions, 0);
+		kfree(r);//This will only free the attributes of each region, NOT their address spaces...
+		array_remove(as->as_regions, 0);//Removing the first shifts the rest down.
+	}
+	//  TODO:
+	//All physical pages held by the address space must be set to free! Scan the page table!
 	kfree(as);
 }
 
@@ -513,7 +646,9 @@ as_activate(void)
 
 	splx(spl);
 	/*
-	 * Write this.
+	 * We may actually be able to leave this as-is.
+	 * Unless, we try to implement the allowance of multiple
+	 *   process' address translations at once in the TLB.
 	 */
 }
 
@@ -541,20 +676,21 @@ int
 as_define_region(struct addrspace *as, vaddr_t vaddr, size_t memsize,
 		 int readable, int writeable, int executable)
 {
+	/*
 	size_t npages;
 
 	dumbvm_can_sleep();
 
-	/* Align the region. First, the base... */
+	// Align the region. First, the base...
 	memsize += vaddr & ~(vaddr_t)PAGE_FRAME;
 	vaddr &= PAGE_FRAME;
 
-	/* ...and now the length. */
+	// ...and now the length.
 	memsize = (memsize + PAGE_SIZE - 1) & PAGE_FRAME;
 
 	npages = memsize / PAGE_SIZE;
 
-	/* We don't use these - all pages are read-write */
+	// We don't use these - all pages are read-write
 	(void)readable;
 	(void)writeable;
 	(void)executable;
@@ -571,30 +707,79 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t memsize,
 		return 0;
 	}
 
-	/*
-	 * Support for more than two regions is not available.
-	 */
+	// Support for more than two regions is not available.
 	kprintf("dumbvm: Warning: too many regions\n");
 	return ENOSYS;
-
+	*/
 
 	/*
-	 * Write this.
+	 * Our new code:
 	 */
 
-	/*(void)as;
-	(void)vaddr;
-	(void)memsize;
-	(void)readable;
-	(void)writeable;
-	(void)executable;
-	return ENOSYS;*/
+	//Create a new region called newregion.
+	struct as_region *newregion;
+	//NEW DESIGN DECISION: Make the passed in vaddr page-aligned.
+	uint32_t offset = vaddr % PAGE_SIZE;
+	vaddr -= offset;
+	//Allocate memory just for the attributes of as_region, NOT the memory it will request.
+	newregion = kmalloc(sizeof(struct as_region));
+	unsigned int i = 0;
+	unsigned int page_num = 0;
+	vaddr_t page_start = vaddr; //Used for verifying that each requested virtual page doesn't belong to another region.
+
+	newregion->start = vaddr;
+	newregion->size = (memsize / PAGE_SIZE) + 1; //If memsize is page-aligned, then remove the +1.
+	if ((memsize % PAGE_SIZE) == 0) {newregion->size--;}
+
+	for (i = 0; i < array_num(as->as_regions); i++)
+	{
+		//Make sure another region doesn't own any requested pages.
+		struct as_region *r = array_get(as->as_regions, i);
+		for (page_num = 0; page_num < newregion->size; page_num++);
+		{
+			if(page_start >= r->start && page_start < r->end)
+			{
+				kfree(newregion);
+				return ENOSYS;
+				//We need to do a kfree here. Hey, WE MIGHT'VE MADE OTHER MEMLEAKS THIS WAY!!
+			}
+			page_start += PAGE_SIZE;
+		}
+		page_start = newregion->start;
+	}
+	//Make sure we actually have enough memory for this new region. (Check that we haven't collided with the stack.)
+	//  Eventually, we may want to check for a collision with the heap instead.
+	/*if (((newregion->size * PAGE_SIZE) + as->next_start) > (as->stack_start - PAGE_SIZE))
+	{
+		kprintf("Warning: Way too much memory allocated in one address space!");
+		return ENOSYS;
+	}*/
+	newregion->end = newregion->start + (newregion->size * PAGE_SIZE);
+	//Update the start address for the next region. From our old plan of ignoring vaddr.
+	//as->next_start += (newregion->size * PAGE_SIZE);
+
+	//Assign permission. Will be stored in page table entry later.
+	newregion->permission = 0; //Default value. Gets increased if any permission flags are set.
+	if (executable) {newregion->permission++;}
+	if (writeable) {newregion->permission+=2;}
+	if (readable) {newregion->permission+=4;}
+
+	//Expand the address space's stack to give this region a stack of its own.
+	//  THAT WAS THE OlD PLAN! Now, we're keeping the stack how it was in dumbvm.
+	//newregion->stack = as->stack_start;
+	//as->stack_start -= PAGE_SIZE; //For now, we'll just give one page for each stack.
+
+	//Add this new region to the address space's array.
+	unsigned int idx = 0;
+	array_add(as->as_regions, newregion, &idx);
+	//(void)vaddr;
+	return 0;
 }
 
 int
 as_prepare_load(struct addrspace *as)
 {
-	KASSERT(as->as_pbase1 == 0);
+/*	KASSERT(as->as_pbase1 == 0);
 	KASSERT(as->as_pbase2 == 0);
 	KASSERT(as->as_stackpbase == 0);
 
@@ -614,19 +799,19 @@ as_prepare_load(struct addrspace *as)
 	if (as->as_stackpbase == 0) {
 		return ENOMEM;
 	}
+*/
+//	as_zero_region(as->as_pbase1, as->as_npages1);
+//	as_zero_region(as->as_pbase2, as->as_npages2);
+//	as_zero_region(as->as_stackpbase, DUMBVM_STACKPAGES);
 
-	as_zero_region(as->as_pbase1, as->as_npages1);
-	as_zero_region(as->as_pbase2, as->as_npages2);
-	as_zero_region(as->as_stackpbase, DUMBVM_STACKPAGES);
-
-	return 0;
+//	return 0;
 
 	/*
 	 * Write this.
 	 */
 
-	/*(void)as;
-	return 0;*/
+	(void)as;
+	return 0;
 }
 
 int
@@ -638,17 +823,21 @@ as_complete_load(struct addrspace *as)
 	/*
 	 * Write this.
 	 */
-	/*(void)as;
-	return 0;*/
 }
 
 int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
-	KASSERT(as->as_stackpbase != 0);
+	//KASSERT(as->as_stackpbase != 0);//Need to keep part of as_prepre_load to keep this working...
 	/*
-	 * Write this.
+	 * We will leave this as-is for now, but will probably need to change it later!
+	 *   We want to find out how to track the size of the stack, not just its start.
 	 */
+
+	//We'll make the stack a statically-sized region FOR NOW. Give it read-write permission.
+	//  Notice that the address passed in is the BOTTOM of the stack!
+	as_define_region(as, (USERSTACK - (DUMBVM_STACKPAGES * PAGE_SIZE)), (DUMBVM_STACKPAGES * PAGE_SIZE), 1, 1, 0);
+	//Perhaps, when needed, we can expand the stack by calling this again or something.
 
 	//(void)as;
 
