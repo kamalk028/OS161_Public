@@ -597,10 +597,37 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	 * Our new code:
 	 */
 
-	//struct as_region *r;
-	//struct page_table_entry *pte;//NOT SURE IF PHYSICAL ADDRESSES SHOULD BE COPIED WHEN COPYING PAGES!
-	(void)old;
-	(void)*ret;
+	struct as_region *r;
+	struct page_table_entry *pte, *newpte;//We will copy all pte's as well, except the new as will get different ppn's.
+	unsigned int num_regions = array_num(old->as_regions);
+	unsigned int num_pte = array_num(old->pt->pt_array);
+	unsigned int i;
+	bool read = 0, write = 0, exec = 0;
+	paddr_t newppn;
+
+	//Start by copying and allocating mem for each region.
+	for (i = 0; i < num_regions; i++)
+	{
+		read = write = exec = 0;
+		r = array_get(old->as_regions, i);
+		//Set permission variables.
+		if (r->permission >= 4) {read = 1;}
+		if (r->permission >= 6 || r->permission == 2 || r->permission == 3) {write = 1;}
+		if (r->permission % 2 == 1) {exec = 1;}
+		//It could be more efficient to define regions manually, if we must.
+		as_define_region(newas, r->start, (r->size * PAGE_SIZE), read, write, exec);
+	}
+	//Now copy all the pte's, except allocte new physical pages for each entry.
+	for (i = 0; i < num_pte; i++)
+	{
+		pte = array_get(old->pt->pt_array, i);
+		newppn = getppages(1);
+		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
+		pt_append(newas->pt, newpte);
+	}
+
+	//(void)old;
+	//(void)*ret;
 	 *ret = newas;
 	return 0;
 }
@@ -683,7 +710,7 @@ as_deactivate(void)
  */
 int
 as_define_region(struct addrspace *as, vaddr_t vaddr, size_t memsize,
-		 int readable, int writeable, int executable)
+		 bool readable, bool writeable, bool executable)
 {
 	/*
 	size_t npages;
