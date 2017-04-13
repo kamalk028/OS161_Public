@@ -608,10 +608,17 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 void
 as_destroy(struct addrspace *as)
 {
-	/*
-	 * Clean up as needed.
-	 */
 	dumbvm_can_sleep();
+	struct as_region *r;
+	//Free all memory regions before freeing the address space.
+	while(array_num(as->as_regions))
+	{
+		r = array_get(as->as_regions, 0);
+		kfree(r);//This will only free the attributes of each region, NOT their address spaces...
+		array_remove(as->as_regions, 0);//Removing the first shifts the rest down.
+	}
+	//  TODO:
+	//All physical pages held by the address space must be set to free! Scan the page table!
 	kfree(as);
 }
 
