@@ -62,7 +62,8 @@ struct addrspace {
 	//Each process has its own page table, so they can afford to have an array of memory regions!
 
 	struct array *as_regions;
-	vaddr_t stack_start; //Will be set to USERSTACK (or 0x7fffffff), and grows down with each as_define_region call.
+	//NOTE: We are leaving as_stackpbase as it was, except we changed it to a vaddr_t.
+	vaddr_t as_stackpbase; //Will be set to USERSTACK (or 0x7fffffff), and grows down with each as_define_region call.
 	//vaddr_t heap_start; //We can define this here once we know for certain what to do with it.
 	struct page_table *pt; //Starts out empty, doesn't get filled until vm_fault calls occur.
 #endif

@@ -1140,7 +1140,7 @@ int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn)
 			pte->ref = 0;//While implementing swapping, CHANGE THIS FUNCTION so that it starts the lookup where the last one left off.
 		}
 	}
-	return -1; //This means no page table entry for given vpn 
+	return -1; //This means no page table entry for given vpn.
 }
 
 /*paddr_t pt_lookup(uint32_t va, uint8_t pm)
