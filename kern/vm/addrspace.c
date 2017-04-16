@@ -413,6 +413,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	uint32_t ppn = 0; //Used for page tabe lookup.
 
 	faultaddress &= PAGE_FRAME; //This effectively chops off 12 bits of faultaddress.
+	//kprintf("FAULTADDR: %x\n", faultaddress); //Don't put kprintf's in vm_fault...
 
 	DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
 
@@ -476,14 +477,14 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		return EFAULT;
 	}
 
-	vpn = faultaddress & 42949631999; //Chops off last twelve bits of faultaddress. (2^32 - 2^12 - 1)
+	vpn = faultaddress & PAGE_FRAME; //Chops off last twelve bits of faultaddress. (2^32 - 2^12 - 1)
 	err = pt_lookup(as->pt, vpn, as_region->permission, &ppn);
 
 	if (err)//If no pte was found, allocate some physical memory.
 	{
 		paddr = getppages(1);
 		//ppn = copy_fa - MIPS_KSEG0;
-		ppn = paddr & 42949631999;
+		ppn = paddr & PAGE_FRAME;
 		struct page_table_entry *pte = pte_create(vpn, ppn, as_region->permission, 1, 1, 0);
 		pt_append(as->pt, pte);
 	}
@@ -628,6 +629,10 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 
 	//(void)old;
 	//(void)*ret;
+	/*(void)*pte;
+	(void)*newpte;
+	(void)num_pte;
+	(void)newppn;*/
 	 *ret = newas;
 	return 0;
 }
