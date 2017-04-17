@@ -102,7 +102,7 @@ getppages(unsigned long npages)
 	unsigned long cont_pages = 0;
 
 	while(i<total_npages && cont_pages < npages)
-	{ 
+	{
 		if(cm_entry[i].page_status == FREE_STATE)
 		{
 			cont_pages++;
@@ -115,6 +115,10 @@ getppages(unsigned long npages)
 	}
 	if(i == total_npages)
 	{
+		if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
+		{
+			spinlock_release(&cm_splk);
+		}
 		return 0; //TODO: check with TA if we can return 0 or something else. For 3.3, we will call page swapping code here.
 	}
 	else
@@ -216,19 +220,18 @@ coremap_init()
 	return;
 } 
 
-/* Copying dumbvm functions 
- * Just to get the kernel started
-*/
+//We started by copying dumbvm functions to get the kernel to boot.
+//At this point, we've replaced almost everything and shouldn't need to write much more.
 
 void
 vm_bootstrap(void)
 {
-	/* Do nothing. */
+	// Do nothing. This function is called early in bootup.
+	// If we need anything initilized immediately, it'll go here.
 }
 
-unsigned int coremap_used_bytes() {
-
-	/* dumbvm doesn't track page allocations. Return 0 so that khu works. */
+unsigned int coremap_used_bytes()
+{
 	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
 	{
 		spinlock_acquire(&cm_splk);
@@ -293,7 +296,6 @@ free_kpages(vaddr_t addr)
 	{
 		spinlock_release(&cm_splk);
 	}
-	
 }
 
 int
@@ -323,24 +325,24 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	}
 
 	if (curproc == NULL) {
-		
+
 		//  No process. This is probably a kernel fault early
 		//  in boot. Return EFAULT so as to panic instead of
 		//  getting into an infinite faulting loop.
-		 
+
 		return EFAULT;
 	}
 
 	as = proc_getas();
 	if (as == NULL) {
-		
+
 		 // No address space set up. This is probably also a
 		 // kernel fault early in boot.
-		 
+
 		return EFAULT;
 	}
 
-	// Assert that the address space has been set up properly. 
+	// Assert that the address space has been set up properly.
 	KASSERT(as->as_vbase1 != 0);
 	KASSERT(as->as_pbase1 != 0);
 	KASSERT(as->as_npages1 != 0);
@@ -413,6 +415,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	uint32_t ppn = 0; //Used for page tabe lookup.
 
 	faultaddress &= PAGE_FRAME; //This effectively chops off 12 bits of faultaddress.
+	//kprintf("FAULTADDR: %x\n", faultaddress); //Don't put kprintf's in vm_fault...
 
 	DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
 
@@ -476,14 +479,14 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		return EFAULT;
 	}
 
-	vpn = faultaddress & 42949631999; //Chops off last twelve bits of faultaddress. (2^32 - 2^12 - 1)
+	vpn = faultaddress & PAGE_FRAME; //Chops off last twelve bits of faultaddress. (2^32 - 2^12 - 1)
 	err = pt_lookup(as->pt, vpn, as_region->permission, &ppn);
 
 	if (err)//If no pte was found, allocate some physical memory.
 	{
 		paddr = getppages(1);
 		//ppn = copy_fa - MIPS_KSEG0;
-		ppn = paddr & 42949631999;
+		ppn = paddr & PAGE_FRAME;
 		struct page_table_entry *pte = pte_create(vpn, ppn, as_region->permission, 1, 1, 0);
 		pt_append(as->pt, pte);
 	}
@@ -597,10 +600,67 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	 * Our new code:
 	 */
 
-	//struct as_region *r;
-	//struct page_table_entry *pte;//NOT SURE IF PHYSICAL ADDRESSES SHOULD BE COPIED WHEN COPYING PAGES!
-	(void)old;
-	(void)*ret;
+	struct as_region *r, *newr;
+	struct page_table_entry *pte, *newpte;//We will copy all pte's as well, except the new as will get different ppn's.
+	unsigned int num_regions = array_num(old->as_regions);
+	unsigned int num_pte = array_num(old->pt->pt_array);
+	unsigned int i;
+	bool read = 0, write = 0, exec = 0;
+	paddr_t newppn;
+	int err = 0;
+
+	//Start by copying and allocating mem for each region.
+	for (i = 0; i < num_regions; i++)
+	{
+		read = write = exec = 0;
+		r = array_get(old->as_regions, i);
+		KASSERT(r->start != 0); //dumbvm did this too.
+		//DEBUGGING: REMOVE KPRINTF's!!
+		//kprintf("Old start: %x\n", r->start);
+		//kprintf("Old end: %x\n", r->end);
+		//Set permission variables.
+		if (r->permission >= 4) {read = 1;}
+		if (r->permission >= 6 || r->permission == 2 || r->permission == 3) {write = 1;}
+		if (r->permission % 2 == 1) {exec = 1;}
+		//It could be more efficient to define regions manually, if we must.
+		err = as_define_region(newas, r->start, (r->size * PAGE_SIZE), read, write, exec);
+		if (err)
+		{
+			kfree(newas);
+			(void)*ret;
+			return err;
+		}
+		//New: Try to copy the actual contents of memory.
+		newr = array_get(old->as_regions, i);
+		//memmove((void *)newr->start, (const void *)r->start, (r->size * PAGE_SIZE));//PROBLEM: memmove may expect either paddr's or kvaddr's > 0x80000000, but we give small vaddr's.
+												//Might actually want to call memmove on the physical pages owned by the oldproc!
+		/*memmove((void *)PADDR_TO_KVADDR(newr->start),
+			(const void *)PADDR_TO_KVADDR(r->start),
+			(r->size * PAGE_SIZE));*/
+		//DEBUGGING: REMOVE KPRINTF's!!
+		//kprintf("New start: %x\n", newr->start);
+		//kprintf("New end: %x\n", newr->end);
+	}
+	//Now copy all the pte's, except allocte new physical pages for each entry.
+	for (i = 0; i < num_pte; i++)
+	{
+		pte = array_get(old->pt->pt_array, i);
+		newppn = getppages(1);
+		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
+		pt_append(newas->pt, newpte);
+		//New: 3rd attempt: Copy the actual contents of memory in the physical pages.
+		memmove((void *)PADDR_TO_KVADDR(newpte->ppn),
+			(const void *)PADDR_TO_KVADDR(pte->ppn),
+			PAGE_SIZE);
+	}
+
+	//(void)old;
+	//(void)*ret;
+	/*(void)*pte;
+	(void)*newpte;
+	(void)num_pte;
+	(void)newppn;*/
+	(void)newr;
 	 *ret = newas;
 	return 0;
 }
@@ -683,7 +743,7 @@ as_deactivate(void)
  */
 int
 as_define_region(struct addrspace *as, vaddr_t vaddr, size_t memsize,
-		 int readable, int writeable, int executable)
+		 bool readable, bool writeable, bool executable)
 {
 	/*
 	size_t npages;
