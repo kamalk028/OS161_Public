@@ -220,19 +220,18 @@ coremap_init()
 	return;
 } 
 
-/* Copying dumbvm functions 
- * Just to get the kernel started
-*/
+//We started by copying dumbvm functions to get the kernel to boot.
+//At this point, we've replaced almost everything and shouldn't need to write much more.
 
 void
 vm_bootstrap(void)
 {
-	/* Do nothing. */
+	// Do nothing. This function is called early in bootup.
+	// If we need anything initilized immediately, it'll go here.
 }
 
-unsigned int coremap_used_bytes() {
-
-	/* dumbvm doesn't track page allocations. Return 0 so that khu works. */
+unsigned int coremap_used_bytes()
+{
 	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
 	{
 		spinlock_acquire(&cm_splk);
@@ -297,7 +296,6 @@ free_kpages(vaddr_t addr)
 	{
 		spinlock_release(&cm_splk);
 	}
-	
 }
 
 int
@@ -327,24 +325,24 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	}
 
 	if (curproc == NULL) {
-		
+
 		//  No process. This is probably a kernel fault early
 		//  in boot. Return EFAULT so as to panic instead of
 		//  getting into an infinite faulting loop.
-		 
+
 		return EFAULT;
 	}
 
 	as = proc_getas();
 	if (as == NULL) {
-		
+
 		 // No address space set up. This is probably also a
 		 // kernel fault early in boot.
-		 
+
 		return EFAULT;
 	}
 
-	// Assert that the address space has been set up properly. 
+	// Assert that the address space has been set up properly.
 	KASSERT(as->as_vbase1 != 0);
 	KASSERT(as->as_pbase1 != 0);
 	KASSERT(as->as_npages1 != 0);
