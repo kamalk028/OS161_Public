@@ -102,7 +102,7 @@ getppages(unsigned long npages)
 	unsigned long cont_pages = 0;
 
 	while(i<total_npages && cont_pages < npages)
-	{ 
+	{
 		if(cm_entry[i].page_status == FREE_STATE)
 		{
 			cont_pages++;
@@ -115,6 +115,10 @@ getppages(unsigned long npages)
 	}
 	if(i == total_npages)
 	{
+		if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
+		{
+			spinlock_release(&cm_splk);
+		}
 		return 0; //TODO: check with TA if we can return 0 or something else. For 3.3, we will call page swapping code here.
 	}
 	else
@@ -598,25 +602,46 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	 * Our new code:
 	 */
 
-	struct as_region *r;
+	struct as_region *r, *newr;
 	struct page_table_entry *pte, *newpte;//We will copy all pte's as well, except the new as will get different ppn's.
 	unsigned int num_regions = array_num(old->as_regions);
 	unsigned int num_pte = array_num(old->pt->pt_array);
 	unsigned int i;
 	bool read = 0, write = 0, exec = 0;
 	paddr_t newppn;
+	int err = 0;
 
 	//Start by copying and allocating mem for each region.
 	for (i = 0; i < num_regions; i++)
 	{
 		read = write = exec = 0;
 		r = array_get(old->as_regions, i);
+		KASSERT(r->start != 0); //dumbvm did this too.
+		//DEBUGGING: REMOVE KPRINTF's!!
+		//kprintf("Old start: %x\n", r->start);
+		//kprintf("Old end: %x\n", r->end);
 		//Set permission variables.
 		if (r->permission >= 4) {read = 1;}
 		if (r->permission >= 6 || r->permission == 2 || r->permission == 3) {write = 1;}
 		if (r->permission % 2 == 1) {exec = 1;}
 		//It could be more efficient to define regions manually, if we must.
-		as_define_region(newas, r->start, (r->size * PAGE_SIZE), read, write, exec);
+		err = as_define_region(newas, r->start, (r->size * PAGE_SIZE), read, write, exec);
+		if (err)
+		{
+			kfree(newas);
+			(void)*ret;
+			return err;
+		}
+		//New: Try to copy the actual contents of memory.
+		newr = array_get(old->as_regions, i);
+		//memmove((void *)newr->start, (const void *)r->start, (r->size * PAGE_SIZE));//PROBLEM: memmove may expect either paddr's or kvaddr's > 0x80000000, but we give small vaddr's.
+												//Might actually want to call memmove on the physical pages owned by the oldproc!
+		/*memmove((void *)PADDR_TO_KVADDR(newr->start),
+			(const void *)PADDR_TO_KVADDR(r->start),
+			(r->size * PAGE_SIZE));*/
+		//DEBUGGING: REMOVE KPRINTF's!!
+		//kprintf("New start: %x\n", newr->start);
+		//kprintf("New end: %x\n", newr->end);
 	}
 	//Now copy all the pte's, except allocte new physical pages for each entry.
 	for (i = 0; i < num_pte; i++)
@@ -625,6 +650,10 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		newppn = getppages(1);
 		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
 		pt_append(newas->pt, newpte);
+		//New: 3rd attempt: Copy the actual contents of memory in the physical pages.
+		memmove((void *)PADDR_TO_KVADDR(newpte->ppn),
+			(const void *)PADDR_TO_KVADDR(pte->ppn),
+			PAGE_SIZE);
 	}
 
 	//(void)old;
@@ -633,6 +662,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	(void)*newpte;
 	(void)num_pte;
 	(void)newppn;*/
+	(void)newr;
 	 *ret = newas;
 	return 0;
 }
