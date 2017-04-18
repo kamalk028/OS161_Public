@@ -112,7 +112,7 @@ proc_create(const char *name)
 		return NULL;
 	}
 
-	proc->ft = ft_create(name);
+	proc->ft = ft_create(name, proc);
 	if(proc->ft == NULL)
 	{
 		kfree(proc->p_name);
@@ -552,7 +552,7 @@ proc_setas(struct addrspace *newas)
 
 /* File Table function definitions */
 
-struct file_table* ft_create (const char *name)
+struct file_table* ft_create (const char *name, struct proc *proc)
 {
 	struct file_table* ft;
 	ft = kmalloc(sizeof(*ft));
@@ -574,7 +574,7 @@ struct file_table* ft_create (const char *name)
 		return NULL;
 	}
 	array_init(ft->file_handle_arr);
-	ft->proc = NULL;//This should probably hold curproc's PID!!
+	ft->proc = proc;//This should probably hold curproc's PID!!
 	return ft;
 }
 
