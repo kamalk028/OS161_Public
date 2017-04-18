@@ -220,19 +220,18 @@ coremap_init()
 	return;
 } 
 
-/* Copying dumbvm functions 
- * Just to get the kernel started
-*/
+//We started by copying dumbvm functions to get the kernel to boot.
+//At this point, we've replaced almost everything and shouldn't need to write much more.
 
 void
 vm_bootstrap(void)
 {
-	/* Do nothing. */
+	// Do nothing. This function is called early in bootup.
+	// If we need anything initilized immediately, it'll go here.
 }
 
-unsigned int coremap_used_bytes() {
-
-	/* dumbvm doesn't track page allocations. Return 0 so that khu works. */
+unsigned int coremap_used_bytes()
+{
 	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
 	{
 		spinlock_acquire(&cm_splk);
@@ -297,7 +296,6 @@ free_kpages(vaddr_t addr)
 	{
 		spinlock_release(&cm_splk);
 	}
-	
 }
 
 int
@@ -327,24 +325,24 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	}
 
 	if (curproc == NULL) {
-		
+
 		//  No process. This is probably a kernel fault early
 		//  in boot. Return EFAULT so as to panic instead of
 		//  getting into an infinite faulting loop.
-		 
+
 		return EFAULT;
 	}
 
 	as = proc_getas();
 	if (as == NULL) {
-		
+
 		 // No address space set up. This is probably also a
 		 // kernel fault early in boot.
-		 
+
 		return EFAULT;
 	}
 
-	// Assert that the address space has been set up properly. 
+	// Assert that the address space has been set up properly.
 	KASSERT(as->as_vbase1 != 0);
 	KASSERT(as->as_pbase1 != 0);
 	KASSERT(as->as_npages1 != 0);
@@ -493,27 +491,36 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		pt_append(as->pt, pte);
 	}
 
-	paddr = ppn; //We didn't want to change TLB-related code, which took the paddr as a page num.
+	paddr = ppn; //We didn't want to change TLB-related code too much.
 
-	//Update the tlb.
+	//Update the tlb. There is a tlb_probe function, I'm not sure why they don't just call that.
 	spl = splhigh();
 	for (i=0; i<NUM_TLB; i++) {
 		tlb_read(&ehi, &elo, i);
 		if (elo & TLBLO_VALID) {
-			continue;
+			continue; //as_activate uses tlb_write to fill all entries with INVALID.
+				  //  So, after a context switch, INVALID means AVAILABLE.
 		}
 		ehi = faultaddress;
-		elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
-		DEBUG(DB_VM, "dumbvm: 0x%x -> 0x%x\n", faultaddress, paddr);
+		elo = paddr | TLBLO_DIRTY | TLBLO_VALID; //The 22nd and 23rd bits of TLB entries track dirty and valid.
+		DEBUG(DB_VM, "Not-so-dumb-vm before tlb_write: 0x%x -> 0x%x\n", faultaddress, paddr);
 		tlb_write(ehi, elo, i);
 		splx(spl);
 		return 0;
 	}
 
-	kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");//CHANGE THIS EVENTUALLY!!
-	splx(spl);
-	return EFAULT;
+	//At this point, the TLB is full.
+	//kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
 
+	//We will use random entry replacement for now.
+	//vm_tlbshootdown();//If you make a complicated tlb-entry-replacement algo, call this.
+	//Note that there is a struct called tlbshootdown that you must pass into this function.
+	ehi = faultaddress;
+	elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
+	DEBUG(DB_VM, "Not-so-dumb-vm before tlb_random: 0x%x -> 0x%x\n", faultaddress, paddr);
+	tlb_random(ehi, elo); //Overwrites a random TLB entry.
+	splx(spl);
+	return 0;
 }
 
 struct addrspace *
