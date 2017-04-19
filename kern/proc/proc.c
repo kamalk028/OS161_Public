@@ -594,16 +594,18 @@ void ft_init(struct file_table* ft)
 	struct file_handle* fh_read;
 	struct file_handle* fh_write;
 	struct file_handle* fh_write2;
-	fh_read = fh_create("con:");
-	fh_write = fh_create("con:");
-	fh_write2 = fh_create("con:");
-	fh_open("con:", O_RDONLY, 0664, fh_read);
-	fh_open("con:", O_WRONLY, 0664, fh_write);
-	fh_open("con:", O_WRONLY, 0664, fh_write2);
+	char *f_name = kstrdup("con:");
+	fh_read = fh_create(f_name);
+	fh_write = fh_create(f_name);
+	fh_write2 = fh_create(f_name);
+	fh_open(f_name, O_RDONLY, 0664, fh_read);
+	fh_open(f_name, O_WRONLY, 0664, fh_write);
+	fh_open(f_name, O_WRONLY, 0664, fh_write2);
 	unsigned idx;
 	array_add(ft->file_handle_arr, fh_read, &idx);
 	array_add(ft->file_handle_arr, fh_write, &idx);
 	array_add(ft->file_handle_arr, fh_write2, &idx);
+	kfree(f_name);
 	return;
 }
 
