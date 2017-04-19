@@ -241,7 +241,13 @@ proc_destroy(struct proc *proc)
 	ft_destroy(proc->ft);
 
 	lock_destroy(proc->child_pids_lock);
-	array_cleanup(proc->child_pids);
+	//array_cleanup(proc->child_pids);
+	//int i=0;
+	while(array_num(proc->child_pids))
+	{
+		array_remove(proc->child_pids, 0);
+	}
+	array_destroy(proc->child_pids);
 
 	/*Destory primitives created for waitpid and exit syscalls*/
 	lock_destroy(proc->parent_cvlock);
