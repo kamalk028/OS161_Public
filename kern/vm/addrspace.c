@@ -265,10 +265,8 @@ vm_tlbshootdown(const struct tlbshootdown *ts)
 	panic("dumbvm tried to do tlb shootdown?!\n");
 }
 
-void
-free_kpages(vaddr_t addr)
+void free_ppages(paddr_t p_addr)
 {
-	paddr_t p_addr = addr - MIPS_KSEG0;
 	unsigned int i = p_addr/PAGE_SIZE;// i is assumed to be the index of the first coremap entry used by the process.
 	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
 	{
@@ -296,6 +294,17 @@ free_kpages(vaddr_t addr)
 	{
 		spinlock_release(&cm_splk);
 	}
+}
+
+void
+free_kpages(vaddr_t addr)
+{
+	paddr_t p_addr = addr;
+	if(addr-1 > MIPS_KSEG0)
+	{
+		p_addr = addr - MIPS_KSEG0;
+	}
+	free_ppages(p_addr);
 }
 
 int
@@ -693,7 +702,7 @@ as_destroy(struct addrspace *as)
 	while(array_num(as->pt->pt_array))
 	{
 		pte = array_get(as->pt->pt_array, 0);
-		free_kpages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
+		free_ppages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
 		kfree(pte);
 		array_remove(as->pt->pt_array, 0);
 	}

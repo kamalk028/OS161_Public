@@ -237,6 +237,9 @@ proc_destroy(struct proc *proc)
 	KASSERT(proc != NULL);
 	KASSERT(proc != kproc);
 
+	kfree(proc->tframe);
+	ft_destroy(proc->ft);
+
 	lock_destroy(proc->child_pids_lock);
 	array_cleanup(proc->child_pids);
 
@@ -258,7 +261,6 @@ proc_destroy(struct proc *proc)
 		proc->p_cwd = NULL;
 	}
 
-	ft_destroy(proc->ft);
 
 
 	/* VM fields */
@@ -500,7 +502,15 @@ proc_remthread(struct thread *t)
 	spinlock_acquire(&proc->p_lock);
 	KASSERT(proc->p_numthreads > 0);
 	proc->p_numthreads--;
-	spinlock_release(&proc->p_lock);
+	if(proc->p_numthreads == 0)
+	{
+		spinlock_release(&proc->p_lock);
+		proc_destroy(proc);
+	}
+	else
+	{
+		spinlock_release(&proc->p_lock);
+	}
 
 	spl = splhigh();
 	t->t_proc = NULL;
