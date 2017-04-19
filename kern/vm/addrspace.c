@@ -265,10 +265,8 @@ vm_tlbshootdown(const struct tlbshootdown *ts)
 	panic("dumbvm tried to do tlb shootdown?!\n");
 }
 
-void
-free_kpages(vaddr_t addr)
+void free_ppages(paddr_t p_addr)
 {
-	paddr_t p_addr = addr - MIPS_KSEG0;
 	unsigned int i = p_addr/PAGE_SIZE;// i is assumed to be the index of the first coremap entry used by the process.
 	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
 	{
@@ -296,6 +294,17 @@ free_kpages(vaddr_t addr)
 	{
 		spinlock_release(&cm_splk);
 	}
+}
+
+void
+free_kpages(vaddr_t addr)
+{
+	paddr_t p_addr = addr;
+	if(addr-1 > MIPS_KSEG0)
+	{
+		p_addr = addr - MIPS_KSEG0;
+	}
+	free_ppages(p_addr);
 }
 
 int
@@ -463,6 +472,23 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 			break;
 		}
 	}
+
+	/*//If faultaddress is close to the bottom of the stack, grow the stack!
+	//I MADE AN INCORRECT ASSUMPTION! The last index in as_regions is the last one created, NOT always the stack!
+	if ((i == array_num(as->as_regions) - 1) && (faultaddress == r->start))
+	{
+		//Make sure the stack won't meet the heap if expanded.
+		if (array_get(as->as_regions, i-1)->end >= r->start - (6 * PAGE_SIZE))
+		{
+			panic("The stack has no room left to grow!");
+		}
+		//The stack gets six more virtual pages.
+		//Note that we do not allocate physical pages yet.
+		r->start -= 6 * PAGE_SIZE;
+		r->size += 6;
+		//NOT CERTAIN THAT UPDATING r ALSO UPDATES THE REAL REGION!!
+	}
+	*/
 
 	//I made the stack a full-fledged as_region, so this isn't needed anymore.
 	/*stackbase = USERSTACK - DUMBVM_STACKPAGES * PAGE_SIZE;
@@ -689,14 +715,17 @@ as_destroy(struct addrspace *as)
 		kfree(r);//This will only free the attributes of each region, NOT their process' memory.
 		array_remove(as->as_regions, 0);//Removing the first shifts the rest down.
 	}
+	array_destroy(as->as_regions);
 	//All physical pages held by the address space must be set to free! Scan the page table!
 	while(array_num(as->pt->pt_array))
 	{
 		pte = array_get(as->pt->pt_array, 0);
-		free_kpages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
+		free_ppages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
 		kfree(pte);
 		array_remove(as->pt->pt_array, 0);
 	}
+	array_destroy(as->pt->pt_array);
+	kfree(as->pt);
 	kfree(as);
 }
 
@@ -885,7 +914,7 @@ as_prepare_load(struct addrspace *as)
 //	return 0;
 
 	/*
-	 * Write this.
+	 * It's probably fine that this does nothing.
 	 */
 
 	(void)as;
@@ -899,13 +928,16 @@ as_complete_load(struct addrspace *as)
 	(void)as;
 	return 0;
 	/*
-	 * Write this.
+	 * It's probably fine that this doesn't do anything anymore.
+	 * We don't want any memory statically allocated anymore.
 	 */
 }
 
 int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
+	int err = 0, heaperr = 0;
+	//struct as_region *r = NULL;
 	//KASSERT(as->as_stackpbase != 0);//Need to keep part of as_prepre_load to keep this working...
 	/*
 	 * We will leave this as-is for now, but will probably need to change it later!
@@ -914,13 +946,27 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 
 	//We'll make the stack a statically-sized region FOR NOW. Give it read-write permission.
 	//  Notice that the address passed in is the BOTTOM of the stack!
-	as_define_region(as, (USERSTACK - (DUMBVM_STACKPAGES * PAGE_SIZE)), (DUMBVM_STACKPAGES * PAGE_SIZE), 1, 1, 0);
-	//Perhaps, when needed, we can expand the stack by calling this again or something.
+	//  The stack can grow by six pages once the botom page (r->start) is reached in vm_fault.
+	err = as_define_region(as, (USERSTACK - (DUMBVM_STACKPAGES * PAGE_SIZE)), (DUMBVM_STACKPAGES * PAGE_SIZE), 1, 1, 0);
+	if (err) { return err; }
+	//r = array_get(as->as_regions, array_num(as->as_regions)-1);
+
+	/*I'm also gonna declare the heap here, since this is also a region every process needs.
+	//The heap starts at address USERSTACK/2 with 0 pages allocated for it. (Default: 0x40000000)
+	//The sbrk call will grow it by as many pages as the user requests.
+	heaperr = as_define_region(as, (USERSTACK / 2), 0, 1, 1, 0);
+	if (heaperr)
+	{
+		kfree(r);
+		return heaperr;
+	}
+	*/
 
 	//(void)as;
+	(void)heaperr;
 
 	/* Initial user-level stack pointer */
-	*stackptr = USERSTACK;
+	*stackptr = USERSTACK; //Top of the stack.
 
 	return 0;
 }

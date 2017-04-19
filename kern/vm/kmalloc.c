@@ -838,6 +838,9 @@ kheap_getused(void) {
 	}
 
 	coremap_bytes = coremap_used_bytes();
+//	kprintf("KAMAL: coremap_bytes = %d", coremap_bytes);
+//        kprintf("KAMAL: the other stuff size = %d", num_pages*PAGE_SIZE);
+
 
 	// Don't double-count the pages we're using for subpage allocation;
 	// we've already accounted for the used portion.
