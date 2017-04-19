@@ -380,7 +380,7 @@ proc_create_runprogram(const char *name)
 	newproc->ppid = 0;//ONLY THE FIRST PROCESS SHOULD HAVE 0 FOR THIS! OTHERS GET curproc->pid!!
 	newproc->pid = next_pid;
 	next_pid++;
-	if (next_pid > MAX_PROC || pt[next_pid].proc != NULL)
+	if (next_pid >= MAX_PROC || pt[next_pid].proc != NULL)
 	{
 		next_pid = 2;
 		while(pt[next_pid].proc != NULL)
