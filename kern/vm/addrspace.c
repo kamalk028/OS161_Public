@@ -698,6 +698,7 @@ as_destroy(struct addrspace *as)
 		kfree(r);//This will only free the attributes of each region, NOT their process' memory.
 		array_remove(as->as_regions, 0);//Removing the first shifts the rest down.
 	}
+	array_destroy(as->as_regions);
 	//All physical pages held by the address space must be set to free! Scan the page table!
 	while(array_num(as->pt->pt_array))
 	{
@@ -706,6 +707,8 @@ as_destroy(struct addrspace *as)
 		kfree(pte);
 		array_remove(as->pt->pt_array, 0);
 	}
+	array_destroy(as->pt->pt_array);
+	kfree(as->pt);
 	kfree(as);
 }
 

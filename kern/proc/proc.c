@@ -593,20 +593,27 @@ void ft_init(struct file_table* ft)
 	KASSERT(ft != NULL);
 	struct file_handle* fh_read;
 	struct file_handle* fh_write;
+	struct file_handle* fh_write2;
 	fh_read = fh_create("con:");
 	fh_write = fh_create("con:");
+	fh_write2 = fh_create("con:");
 	fh_open("con:", O_RDONLY, 0664, fh_read);
 	fh_open("con:", O_WRONLY, 0664, fh_write);
+	fh_open("con:", O_WRONLY, 0664, fh_write2);
 	unsigned idx;
 	array_add(ft->file_handle_arr, fh_read, &idx);
 	array_add(ft->file_handle_arr, fh_write, &idx);
-	array_add(ft->file_handle_arr, fh_write, &idx);
+	array_add(ft->file_handle_arr, fh_write2, &idx);
 	return;
 }
 
 void ft_destroy(struct file_table *ft)
 {
 	KASSERT(ft != NULL);
+	struct proc *proc = ft->proc;
+	lock_acquire(proc->child_pids_lock);
+	bool has_child = array_num(proc->child_pids) > 0 ? true : false;
+	lock_release(proc->child_pids_lock);
 	ft->proc = NULL;
 	kfree(ft->proc_name);
 	//Update ref_count of any fh's still left in the array.
@@ -618,7 +625,7 @@ void ft_destroy(struct file_table *ft)
 		if(array_get(ft->file_handle_arr, i) != NULL){
 			fh = (struct file_handle*) array_get(ft->file_handle_arr, i);
 			fh->ref_count--;
-			if(fh->ref_count == 0){
+			if(fh->ref_count == 0 || !has_child) {// && i != 2){
 				fh_destroy(fh);
 			}
 		}
