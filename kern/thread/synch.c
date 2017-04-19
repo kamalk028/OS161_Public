@@ -196,6 +196,11 @@ lock_acquire(struct lock *lock)
 	KASSERT(lock != NULL);
 	KASSERT(curthread->t_in_interrupt == false);
 	
+	if(lock_do_i_hold(lock))
+	{
+		return;
+	}
+	
 	spinlock_acquire(&lock->lock_splk);
 
 	/* Call this (atomically) before waiting for a lock */

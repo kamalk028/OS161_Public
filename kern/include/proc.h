@@ -58,7 +58,7 @@ struct file_table {
 	struct array *file_handle_arr;
 	struct proc *proc;
 };
-struct file_table *ft_create(const char *name);
+struct file_table *ft_create(const char *name, struct proc* proc);
 void ft_init(struct file_table *ft);
 void ft_destroy(struct file_table *ft);
 struct file_table *get_curproc_ft(void);
