@@ -723,7 +723,6 @@ as_destroy(struct addrspace *as)
 		free_ppages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
 		kfree(pte);
 		array_remove(as->pt->pt_array, 0);
-		kfree(as->pt);
 	}
 	array_destroy(as->pt->pt_array);
 	kfree(as->pt);
