@@ -696,6 +696,7 @@ as_destroy(struct addrspace *as)
 		free_kpages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
 		kfree(pte);
 		array_remove(as->pt->pt_array, 0);
+		kfree(as->pt);
 	}
 	kfree(as);
 }
@@ -885,7 +886,7 @@ as_prepare_load(struct addrspace *as)
 //	return 0;
 
 	/*
-	 * Write this.
+	 * It's probably fine that this does nothing.
 	 */
 
 	(void)as;
@@ -899,13 +900,15 @@ as_complete_load(struct addrspace *as)
 	(void)as;
 	return 0;
 	/*
-	 * Write this.
+	 * It's probably fine that this doesn't do anything anymore.
+	 * We don't want any memory statically allocated anymore.
 	 */
 }
 
 int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
+	int err = 0;
 	//KASSERT(as->as_stackpbase != 0);//Need to keep part of as_prepre_load to keep this working...
 	/*
 	 * We will leave this as-is for now, but will probably need to change it later!
@@ -914,14 +917,14 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 
 	//We'll make the stack a statically-sized region FOR NOW. Give it read-write permission.
 	//  Notice that the address passed in is the BOTTOM of the stack!
-	as_define_region(as, (USERSTACK - (DUMBVM_STACKPAGES * PAGE_SIZE)), (DUMBVM_STACKPAGES * PAGE_SIZE), 1, 1, 0);
-	//Perhaps, when needed, we can expand the stack by calling this again or something.
+	err = as_define_region(as, (USERSTACK - (DUMBVM_STACKPAGES * PAGE_SIZE)), (DUMBVM_STACKPAGES * PAGE_SIZE), 1, 1, 0);
+	//Perhaps, when needed, we can expand the stack by simply changing its start position.
 
 	//(void)as;
 
 	/* Initial user-level stack pointer */
-	*stackptr = USERSTACK;
+	*stackptr = USERSTACK; //Top of the stack.
 
-	return 0;
+	return err;
 }
 

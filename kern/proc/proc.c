@@ -380,7 +380,14 @@ proc_create_runprogram(const char *name)
 	newproc->ppid = 0;//ONLY THE FIRST PROCESS SHOULD HAVE 0 FOR THIS! OTHERS GET curproc->pid!!
 	newproc->pid = next_pid;
 	next_pid++;
-
+	if (next_pid > MAX_PROC || pt[next_pid].proc != NULL)
+	{
+		next_pid = 2;
+		while(pt[next_pid].proc != NULL)
+		{
+			next_pid++;
+		}
+	}
 	return newproc;
 }
 
@@ -1088,7 +1095,16 @@ struct page_table *pt_create()
 {
 	struct page_table *pt;
 	pt = kmalloc(sizeof(*pt));
+	if (pt == NULL)
+	{
+		return NULL;
+	}
 	pt->pt_array = array_create();
+	if (pt->pt_array == NULL)
+	{
+		kfree(pt);
+		return NULL;
+	}
 	array_init(pt->pt_array);
 	return pt;
 }
