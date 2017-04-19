@@ -938,7 +938,7 @@ int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
 	int err = 0, heaperr = 0;
-	struct as_region *r = NULL;
+	//struct as_region *r = NULL;
 	//KASSERT(as->as_stackpbase != 0);//Need to keep part of as_prepre_load to keep this working...
 	/*
 	 * We will leave this as-is for now, but will probably need to change it later!
@@ -950,7 +950,7 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 	//  The stack can grow by six pages once the botom page (r->start) is reached in vm_fault.
 	err = as_define_region(as, (USERSTACK - (DUMBVM_STACKPAGES * PAGE_SIZE)), (DUMBVM_STACKPAGES * PAGE_SIZE), 1, 1, 0);
 	if (err) { return err; }
-	r = array_get(as->as_regions, array_num(as->as_regions)-1);
+	//r = array_get(as->as_regions, array_num(as->as_regions)-1);
 
 	/*I'm also gonna declare the heap here, since this is also a region every process needs.
 	//The heap starts at address USERSTACK/2 with 0 pages allocated for it. (Default: 0x40000000)
@@ -964,6 +964,7 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 	*/
 
 	//(void)as;
+	(void)heaperr;
 
 	/* Initial user-level stack pointer */
 	*stackptr = USERSTACK; //Top of the stack.
