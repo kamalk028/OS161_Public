@@ -473,6 +473,23 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		}
 	}
 
+	/*//If faultaddress is close to the bottom of the stack, grow the stack!
+	//I MADE AN INCORRECT ASSUMPTION! The last index in as_regions is the last one created, NOT always the stack!
+	if ((i == array_num(as->as_regions) - 1) && (faultaddress == r->start))
+	{
+		//Make sure the stack won't meet the heap if expanded.
+		if (array_get(as->as_regions, i-1)->end >= r->start - (6 * PAGE_SIZE))
+		{
+			panic("The stack has no room left to grow!");
+		}
+		//The stack gets six more virtual pages.
+		//Note that we do not allocate physical pages yet.
+		r->start -= 6 * PAGE_SIZE;
+		r->size += 6;
+		//NOT CERTAIN THAT UPDATING r ALSO UPDATES THE REAL REGION!!
+	}
+	*/
+
 	//I made the stack a full-fledged as_region, so this isn't needed anymore.
 	/*stackbase = USERSTACK - DUMBVM_STACKPAGES * PAGE_SIZE;
 	stacktop = USERSTACK; // CHANGE THIS IF YOU CHANGE STACK ALLOCATION!
@@ -920,7 +937,8 @@ as_complete_load(struct addrspace *as)
 int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
-	int err = 0;
+	int err = 0, heaperr = 0;
+	struct as_region *r = NULL;
 	//KASSERT(as->as_stackpbase != 0);//Need to keep part of as_prepre_load to keep this working...
 	/*
 	 * We will leave this as-is for now, but will probably need to change it later!
@@ -929,14 +947,27 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 
 	//We'll make the stack a statically-sized region FOR NOW. Give it read-write permission.
 	//  Notice that the address passed in is the BOTTOM of the stack!
+	//  The stack can grow by six pages once the botom page (r->start) is reached in vm_fault.
 	err = as_define_region(as, (USERSTACK - (DUMBVM_STACKPAGES * PAGE_SIZE)), (DUMBVM_STACKPAGES * PAGE_SIZE), 1, 1, 0);
-	//Perhaps, when needed, we can expand the stack by simply changing its start position.
+	if (err) { return err; }
+	r = array_get(as->as_regions, array_num(as->as_regions)-1);
+
+	/*I'm also gonna declare the heap here, since this is also a region every process needs.
+	//The heap starts at address USERSTACK/2 with 0 pages allocated for it. (Default: 0x40000000)
+	//The sbrk call will grow it by as many pages as the user requests.
+	heaperr = as_define_region(as, (USERSTACK / 2), 0, 1, 1, 0);
+	if (heaperr)
+	{
+		kfree(r);
+		return heaperr;
+	}
+	*/
 
 	//(void)as;
 
 	/* Initial user-level stack pointer */
 	*stackptr = USERSTACK; //Top of the stack.
 
-	return err;
+	return 0;
 }
 
