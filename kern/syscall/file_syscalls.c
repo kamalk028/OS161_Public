@@ -103,7 +103,7 @@ int sys_write(int fd, void *buff, size_t len, int *ret)
 		return EFAULT;
 	}
 	return ft_write(fd, buff, len, ft, ret);
-	kfree(buff);
+	kfree(buff);//THIS WOULD NOT GET REACHED!
 }
 
 int sys_read(int fd, void* buff, size_t len, int* ret)
@@ -115,6 +115,7 @@ int sys_read(int fd, void* buff, size_t len, int* ret)
 	KASSERT(ft != NULL);
 	if (buff == NULL){
 		*ret = -1;
+		//Should we kfree(ft)?
 		return EFAULT;
 	}
 	return ft_read(fd, buff, len, ft, ret);

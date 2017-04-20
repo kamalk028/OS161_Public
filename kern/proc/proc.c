@@ -644,7 +644,9 @@ void ft_destroy(struct file_table *ft)
 	{
 		if(array_get(ft->file_handle_arr, i) != NULL){
 			fh = (struct file_handle*) array_get(ft->file_handle_arr, i);
+			spinlock_acquire(&fh->fh_splk);
 			fh->ref_count--;
+			spinlock_release(&fh->fh_splk);
 			if(fh->ref_count == 0){ //|| !has_child) {// && i != 2){
 				fh_destroy(fh);
 			}
@@ -735,6 +737,7 @@ int ft_read(int fd, void* buff, size_t bufflen, struct file_table* ft, int* retv
 	struct file_handle *fh;
 	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
 	err = fh_read(buff, bufflen, fh, retval);
+	//Should we kfree(fh)?
 	return err;
 }
 
@@ -743,8 +746,10 @@ int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int
 {
 	unsigned idx;
 	idx = 0; //Initialising because of a compile time error
-	struct file_handle* fh;
-	fh = fh_create(file);
+	struct file_handle* fh = NULL;
+
+	fh = fh_create(file);//ft_close will eventually free the memory for this.
+
 	int err = 0;//By default, assume no errors while err==0.
 	err = fh_open(file,flags,mode,fh);//If fh_open fails, then try passing fh by reference.
 	//err will now hold 0 unless fh_open failed.
@@ -753,7 +758,7 @@ int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int
 		*retval = -1; //This is supposedly not correct, but badcall-open is passing anyway.
 		return err;
 	}
-	
+
 	//New file handle is added to first element of file_handle_arr which contains NULL.
 	//  If none are found, then the array is expanded.
 	unsigned int i;
@@ -809,18 +814,23 @@ int ft_close(int fd, struct file_table *ft, int *retval)
 	{
 		err = EBADF;
 		*retval = -1;
-		return err;	
+		return err;
 	}
 
+	//Why is this type cast here?
 	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
 
 	//Remove the handle from the file table.
 	//NOTE: array_remove is not used because it can automatically shift items downward.
 	//  We do not want open fh's having their fd's inadvertently modified.
+	//  Do not destroy the file handle yet; other proc's might be using it.
 	array_set(ft->file_handle_arr, fd, NULL);
 
 	//If the file handle is NOT being used by any other processes, then destroy it.
+	//IF THIS ref_count IS TOO HIGH, THEN MEMLEAKS WILL OCCUR!
+	spinlock_acquire(&fh->fh_splk);
 	fh->ref_count--;
+	spinlock_release(&fh->fh_splk);
 	if(fh->ref_count == 0)
 	{
 		fh_destroy(fh);
@@ -841,7 +851,7 @@ int ft_copy(int oldfd, int newfd, struct file_table *ft, int *retval)
 		return err;//Do nothing in this case.
 	}
 
-	//Do the usual check for valid fd on oldfd. //NOTE: 0-2 ARE NOT ALLOWED! They probably should be, though. Even though that's crazy.
+	//Do the usual check for valid fd on oldfd.
 	int num = array_num(ft->file_handle_arr);
 	if(oldfd < 0 || oldfd >= num || array_get(ft->file_handle_arr, oldfd) == NULL)
 	{
@@ -879,7 +889,9 @@ int ft_copy(int oldfd, int newfd, struct file_table *ft, int *retval)
 
 	//Add the file handle to the ft. It is intentionally the exact same file handle.
 	array_set(ft->file_handle_arr, newfd, fh);
+	spinlock_acquire(&fh->fh_splk);
 	fh->ref_count++;
+	spinlock_release(&fh->fh_splk);
 	*retval = newfd; //Man pages say to do this if no errors occurred.
 	if(err){
 		*retval = -1;
@@ -922,7 +934,9 @@ struct file_table* ft_copy_all(struct file_table *src, const char *child_name)
 		//Update each fh's ref_count as you go.
 		fh = array_get(dest->file_handle_arr, i);
 		if (fh != NULL){
+			spinlock_acquire(&fh->fh_splk);
 			fh->ref_count++;
+			spinlock_release(&fh->fh_splk);
 		}
 	}
 
@@ -961,7 +975,7 @@ struct file_handle* fh_create(const char* file_name)
 	fh->offset = 0;
 	fh->flags = 0;
 	fh->ref_count = 0;//Number of processes using this file handle.
-	
+
 	return fh;
 }
 
@@ -983,7 +997,7 @@ int fh_open(const char *file, int flags, mode_t mode, struct file_handle *fh)
 {
 	char *dup_fname = kstrdup(file);
 	//strcpy(dup_fname, file);
-	int err;
+	int err = 0;
 	//0664 implies write permission, but that probably shouldn't ALWAYS go there...
 	//Instead, perhaps mode_t should be passed in, since sys_open takes that anyway.
 	err = vfs_open(dup_fname, flags, mode, &fh->vnode);
@@ -993,7 +1007,9 @@ int fh_open(const char *file, int flags, mode_t mode, struct file_handle *fh)
 		return err;
 	}
 	fh->flags = flags;
+	spinlock_acquire(&fh->fh_splk);
 	fh->ref_count++;//This should also be incremented with sys_fork.
+	spinlock_release(&fh->fh_splk);
 	kfree(dup_fname);
 	return 0;
 
@@ -1040,7 +1056,7 @@ int fh_read(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 	KASSERT(fh != NULL);
 	int err;
 	err = 0;
-	struct iovec iov;
+	struct iovec iov;//DO THESE NEED TO BE FREED?
 	struct uio uio;
 	if(!(fh->flags == O_RDONLY || fh->flags & O_RDWR))
 	{
@@ -1051,17 +1067,21 @@ int fh_read(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 		return err;
 	}
 	lock_acquire(fh->fh_lock);//spinlock_acquire(&fh->fh_splk);//spinlock_acquire(&fh->fh_splk);
-	uio_uinit(&iov, &uio, buff, bufflen, fh->offset, UIO_READ);
+	uio_uinit(&iov, &uio, buff, bufflen, fh->offset, UIO_READ);//DOES THIS CALL KMALLOC?
 	err = VOP_READ(fh->vnode, &uio);
 	if(err)
 	{
 		lock_release(fh->fh_lock);
+		//kfree(&uio);
+		//kfree(&iov);//IF THE SYSTEM CRASHES, REMOVE THESE LINES!!
 		*retval = err;
 		return err;
 	}
 	fh->offset = uio.uio_offset;
 	*retval = bufflen - uio.uio_resid;
 	lock_release(fh->fh_lock);//spinlock_acquire(&fh->fh_splk);//spinlock_release(&fh->fh_splk);
+	//kfree(&uio);
+	//kfree(&iov);
 	return err;
 }
 
