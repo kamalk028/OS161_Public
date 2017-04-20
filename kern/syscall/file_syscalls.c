@@ -103,6 +103,7 @@ int sys_write(int fd, void *buff, size_t len, int *ret)
 		return EFAULT;
 	}
 	return ft_write(fd, buff, len, ft, ret);
+	kfree(buff);
 }
 
 int sys_read(int fd, void* buff, size_t len, int* ret)
@@ -157,7 +158,7 @@ sys_fork(int *ret)
 	//kprintf("Newly forked process: pid value: %d\n",newproc->pid);
 
 	//NOTE: Args 3, 4, and 5 most likely should be changed.
-	struct trapframe *tf;
+	struct trapframe *tf=NULL;
 	tf = newproc->tframe;
 	result = thread_fork(name, newproc, enter_forked_process, tf, 0);
 
