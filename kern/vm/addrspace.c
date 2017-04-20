@@ -120,6 +120,7 @@ getppages(unsigned long npages)
 			spinlock_release(&cm_splk);
 		}
 		return 0; //TODO: check with TA if we can return 0 or something else. For 3.3, we will call page swapping code here.
+			  //  I wonder if returning 0 here is what's causing forktest to freak out after a while?
 	}
 	else
 	{
@@ -412,14 +413,14 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	//vaddr_t vbase1, vtop1, vbase2, vtop2, stackbase, stacktop;
 	//vaddr_t stackbase, stacktop;
-	paddr_t paddr; //Used only as a value for getppages to fill.
-	unsigned int i;
-	uint32_t ehi, elo;
-	struct addrspace *as;
-	struct as_region *as_region;
-	int spl;
+	paddr_t paddr = 0; //Used only as a value for getppages to fill.
+	unsigned int i = 0;
+	uint32_t ehi = 0, elo = 0;
+	struct addrspace *as = NULL;
+	struct as_region *as_region = NULL;
+	int spl = 0;
 	bool valid_addr = 0;
-	int err; //Error code for pt_lookup.
+	int err = 0; //Error code for pt_lookup.
 	uint32_t vpn = 0;
 	uint32_t ppn = 0; //Used for page tabe lookup.
 
@@ -462,33 +463,33 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		struct as_region *r = array_get(as->as_regions, i);
 		KASSERT(r->start != 0);
 		KASSERT(r->end != 0);
-		KASSERT(r->size != 0);
+		//KASSERT(r->size != 0); //This KASSERT rejects our heap.
 		KASSERT((r->start & PAGE_FRAME) == r->start);
 		KASSERT((r->end & PAGE_FRAME) == r->end);
 		if(faultaddress >= r->start && faultaddress < r->end)
 		{
 			valid_addr = 1;
-			as_region = array_get(as->as_regions, i);
+			as_region = r; //This copy is used after r is modified.
+			//If faultaddress is close to the bottom of the stack, grow the stack!
+			//Assumption: stack will be the only region past USERSTACK*3/4.
+			if ((faultaddress > (USERSTACK * 3 / 4)) && (faultaddress == r->start))
+			{
+				//Make sure the stack won't meet the heap if expanded.
+				//  Heap is always defined right after stack, so we can find it in the array.
+				r = array_get(as->as_regions, i+1);
+				if (r->end >= as_region->start - (6 * PAGE_SIZE))
+				{
+					panic("The stack has no room left to grow!");
+				}
+				//The stack gets six more virtual pages.
+				//Note that we do not allocate physical pages yet.
+				as_region->start -= 6 * PAGE_SIZE;
+				as_region->size += 6;
+				//NOT CERTAIN THAT UPDATING as_region ALSO UPDATES THE REAL REGION!!
+			}
 			break;
 		}
 	}
-
-	/*//If faultaddress is close to the bottom of the stack, grow the stack!
-	//I MADE AN INCORRECT ASSUMPTION! The last index in as_regions is the last one created, NOT always the stack!
-	if ((i == array_num(as->as_regions) - 1) && (faultaddress == r->start))
-	{
-		//Make sure the stack won't meet the heap if expanded.
-		if (array_get(as->as_regions, i-1)->end >= r->start - (6 * PAGE_SIZE))
-		{
-			panic("The stack has no room left to grow!");
-		}
-		//The stack gets six more virtual pages.
-		//Note that we do not allocate physical pages yet.
-		r->start -= 6 * PAGE_SIZE;
-		r->size += 6;
-		//NOT CERTAIN THAT UPDATING r ALSO UPDATES THE REAL REGION!!
-	}
-	*/
 
 	//I made the stack a full-fledged as_region, so this isn't needed anymore.
 	/*stackbase = USERSTACK - DUMBVM_STACKPAGES * PAGE_SIZE;
@@ -937,21 +938,17 @@ int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
 	int err = 0, heaperr = 0;
-	//struct as_region *r = NULL;
+	struct as_region *r = NULL;
 	//KASSERT(as->as_stackpbase != 0);//Need to keep part of as_prepre_load to keep this working...
-	/*
-	 * We will leave this as-is for now, but will probably need to change it later!
-	 *   We want to find out how to track the size of the stack, not just its start.
-	 */
 
-	//We'll make the stack a statically-sized region FOR NOW. Give it read-write permission.
+	//We'll give the stack a statically-sized region AT FIRST. Give it read-write permission.
 	//  Notice that the address passed in is the BOTTOM of the stack!
 	//  The stack can grow by six pages once the botom page (r->start) is reached in vm_fault.
 	err = as_define_region(as, (USERSTACK - (DUMBVM_STACKPAGES * PAGE_SIZE)), (DUMBVM_STACKPAGES * PAGE_SIZE), 1, 1, 0);
 	if (err) { return err; }
-	//r = array_get(as->as_regions, array_num(as->as_regions)-1);
+	r = array_get(as->as_regions, array_num(as->as_regions)-1);
 
-	/*I'm also gonna declare the heap here, since this is also a region every process needs.
+	//I'm also gonna declare the heap here, since this is also a region every process needs.
 	//The heap starts at address USERSTACK/2 with 0 pages allocated for it. (Default: 0x40000000)
 	//The sbrk call will grow it by as many pages as the user requests.
 	heaperr = as_define_region(as, (USERSTACK / 2), 0, 1, 1, 0);
@@ -960,13 +957,14 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 		kfree(r);
 		return heaperr;
 	}
-	*/
+
 
 	//(void)as;
-	(void)heaperr;
+	//(void)heaperr;
 
 	/* Initial user-level stack pointer */
 	*stackptr = USERSTACK; //Top of the stack.
+	//*heap_break = USERSTACK / 2; //Top of the heap, can be moved with sbrk().
 
 	return 0;
 }

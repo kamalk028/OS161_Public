@@ -23,6 +23,7 @@ void print_padded_str(char *buffer, int len);
 int sys_execv(const char *, char **, int *);
 int sys_waitpid(int pid, int *status, int options, int *ret);
 void sys__exit(int exitcode);
+int sys_sbrk(intptr_t amount, int *ret);
 //int sys_execv(const_userptr_t program, const_userptr_t args, int *retval);
 
 //#endif

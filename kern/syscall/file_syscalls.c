@@ -804,7 +804,7 @@ void sys__exit(int exitcode)
 	lock_release(curproc->child_cvlock);
 
 
-	/*TODO: Need to remove the pid from parents child_pids */
+	/*Need to remove the pid from parents child_pids */
 	lock_acquire(curproc->parent_proc->child_pids_lock);
 	l = array_num(curproc->parent_proc->child_pids);
 	for(i=0; i<l; i++)
@@ -817,7 +817,7 @@ void sys__exit(int exitcode)
 	}
 	lock_release(curproc->parent_proc->child_pids_lock);
 	/*
-	*TODO: For all the pids in child_pids set has_parent_exited = true
+	*For all the pids in child_pids set has_parent_exited = true
 	*And release the child if it is waiting for the status to get updated
 	*/
 	//kprintf("CHILDREN OF THREAD: %s", curproc->p_name);
@@ -930,6 +930,7 @@ void sys__exit(int exitcode)
 /*int sys_execv(const_userptr_t program, const_userptr_t args, int *retval)
 {
 	*retval = 0;
+
 	KASSERT(curproc != NULL);
 	char kprogram[320];//copyinstr so the kernel can access the program name.
 	int copyerr;
@@ -984,6 +985,43 @@ void sys__exit(int exitcode)
 	*retval = -1;
 	return err;
 }*/
+
+int
+sys_sbrk(intptr_t amount, int *ret)
+{
+	unsigned int i = 0;
+	int err = 0;
+	int * kamount = 0;
+	struct as_region *r = NULL;
+
+	//First, get the integer copied in.
+	err = copyin((const_userptr_t)amount, kamount, 4);
+	if (err)
+	{
+		*ret = err;
+		return err;
+	}
+
+	//Next, find the heap region in this proc's as_regions array.
+	while(r == NULL || r->start != (USERSTACK / 2))
+	{
+		r = array_get(curproc->p_addrspace->as_regions, i);
+		i++;
+	}
+
+	//Now, move the top of the heap, provided kamount is valid.
+	if (*kamount % PAGE_SIZE != 0 || (r->end + (*kamount)) < (USERSTACK / 2))
+	{
+		kfree(r);
+		*ret = EINVAL;
+		return EINVAL;
+	}
+	//Expand (or shrink) the heap. Note: physical mem not alloc'd yet.
+	*ret = r->end;
+	r->end += (*kamount);
+	r->size += (*kamount / PAGE_SIZE);
+	return 0;
+}
 
 uint64_t to64(uint32_t high, uint32_t low)
 {
