@@ -101,6 +101,10 @@ struct proc *
 proc_create(const char *name)
 {
 	struct proc *proc;
+	kprintf("Size of LOCK: %d\n",sizeof(struct lock));
+	kprintf("Size of as: %d\n",sizeof(struct addrspace));
+	kprintf("Size of FILE HANDLE: %d\n",sizeof(struct file_handle));
+	kprintf("Size of CV: %d\n",sizeof(struct cv));
 
 	proc = kmalloc(sizeof(*proc));
 	if (proc == NULL) {
@@ -639,6 +643,7 @@ void ft_destroy(struct file_table *ft)
 			fh = (struct file_handle*) array_get(ft->file_handle_arr, i);
 			fh->ref_count--;
 			if(fh->ref_count == 0){ //|| !has_child) {// && i != 2){
+				vfs_close(fh->vnode);
 				fh_destroy(fh);
 			}
 		}
@@ -743,6 +748,7 @@ int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int
 	//err will now hold 0 unless fh_open failed.
 	if(err)
 	{
+		fh_destroy(fh);
 		*retval = -1; //This is supposedly not correct, but badcall-open is passing anyway.
 		return err;
 	}
@@ -816,6 +822,7 @@ int ft_close(int fd, struct file_table *ft, int *retval)
 	fh->ref_count--;
 	if(fh->ref_count == 0)
 	{
+		vfs_close(fh->vnode);
 		fh_destroy(fh);
 	}
 
@@ -982,6 +989,7 @@ int fh_open(const char *file, int flags, mode_t mode, struct file_handle *fh)
 	err = vfs_open(dup_fname, flags, mode, &fh->vnode);
 	if(err)//vfs_open should return 0 unless there was an error.
 	{
+		kfree(dup_fname);
 		kprintf("Inside fh_open: Error while opening file: %s with flag %d\n", file, flags);
 		return err;
 	}
@@ -1119,13 +1127,24 @@ struct page_table *pt_create()
 {
 	struct page_table *pt;
 	pt = kmalloc(sizeof(*pt));
+	if(pt == NULL)
+	{
+		return NULL; //KAMAL_CHECK: Handle null check for all the places that calls pt_create
+	}
 	pt->pt_array = array_create();
+	if(pt->pt_array == NULL)
+	{
+		kfree(pt);
+		return NULL;
+	}
 	array_init(pt->pt_array);
 	return pt;
 }
 
 int pt_append(struct page_table *pt, struct page_table_entry *pte)
 {
+	KASSERT(pt != NULL);
+	KASSERT(pte != NULL);
 	unsigned int idx = 0;
 	return array_add(pt->pt_array, pte, &idx);
 }
@@ -1139,6 +1158,10 @@ struct page_table_entry *pte_create(uint32_t vpn, uint32_t ppn, uint8_t pm, bool
 {
 	struct page_table_entry *pte;
 	pte = kmalloc(sizeof(*pte));
+	if(pte == NULL)//KAMAL_CHECK: I have added this if loop, handle NULL case wherever the function is called.
+	{
+		return NULL;
+	}
 
 	pte->vpn = vpn;
 	pte->ppn = ppn;
@@ -1157,6 +1180,7 @@ int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn)
 	for (int i = 0; i<num; i++)
 	{
 		struct page_table_entry *pte = array_get(pt->pt_array, i);
+		//KAMAL_CHECK: what if the pte is NULL? 
 		if(vpn == pte->vpn)
 		{
 			if(pte->valid)

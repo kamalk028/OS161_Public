@@ -103,7 +103,7 @@ int sys_write(int fd, void *buff, size_t len, int *ret)
 		return EFAULT;
 	}
 	return ft_write(fd, buff, len, ft, ret);
-	kfree(buff);
+	//kfree(buff);
 }
 
 int sys_read(int fd, void* buff, size_t len, int* ret)
