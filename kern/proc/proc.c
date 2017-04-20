@@ -79,10 +79,14 @@ static struct lock *pt_lock;
 struct proc *
 get_proc(int pid)
 {
+	struct proc *p;
 	if (pid >= MAX_PROC || pid < 0){
 		return NULL;
 	}
-	return pt[pid].proc;
+	lock_acquire(pt_lock);
+	p =  pt[pid].proc;
+	lock_release(pt_lock);
+	return p;
 }
 
 void
@@ -388,6 +392,7 @@ proc_create_runprogram(const char *name)
 	pt_lock = lock_create("pt_lock");
 
 	/* Update the process table and assign PID. NOTE: Recycling pid's not yet implemented.*/
+	lock_acquire(pt_lock);
 	pt[next_pid].proc = newproc;//Firat PID is 2. 
 	//Other PIDs will depend on next index (held by next_pid).
 	newproc->ppid = 0;//ONLY THE FIRST PROCESS SHOULD HAVE 0 FOR THIS! OTHERS GET curproc->pid!!
@@ -401,6 +406,7 @@ proc_create_runprogram(const char *name)
 			next_pid++;
 		}
 	}
+	lock_release(pt_lock);
 	return newproc;
 }
 
@@ -454,13 +460,24 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 	/*Copy the parent's file table.*/
 	newproc->ft = ft_copy_all(curproc->ft, name);
 
-	/* Update the process table and assign PID. NOTE: Recycling pid's not yet implemented.*/
-	pt[next_pid].proc = newproc;//First PID for this function should be 3.
-	newproc->pid = next_pid;
+	/* Update the process table and assign PID. */
+	lock_acquire(pt_lock);
+	pt[next_pid].proc = newproc;//Firat PID for this function should be 3. 
+	//Other PIDs will depend on next index (held by next_pid).
 	newproc->ppid = curproc->pid;//curproc is the parent proc.
-	newproc->parent_proc = curproc; //Setting reference to parent process
+	newproc->pid = next_pid;
+	newproc->parent_proc = curproc; //Setting reference to parent proc.
 	newproc->has_parent_exited = false;
 	next_pid++;
+	if (next_pid >= MAX_PROC || pt[next_pid].proc != NULL)
+	{
+		next_pid = 2;
+		while(pt[next_pid].proc != NULL)
+		{
+			next_pid++;
+		}
+	}
+	lock_release(pt_lock);
 
 	/*Adding the pid to child_pids array of the parent (curproc)*/
 	unsigned idx = 0;
@@ -639,6 +656,7 @@ void ft_destroy(struct file_table *ft)
 	//Update ref_count of any fh's still left in the array.
 	//  Destroy them if they are not needed.
 	unsigned int i = 0;
+	bool no_refs = false;
 	struct file_handle* fh;
 	for (i = 0; i < array_num(ft->file_handle_arr); i++)
 	{
@@ -646,8 +664,11 @@ void ft_destroy(struct file_table *ft)
 			fh = (struct file_handle*) array_get(ft->file_handle_arr, i);
 			spinlock_acquire(&fh->fh_splk);
 			fh->ref_count--;
+			if(fh->ref_count == 0){
+				no_refs = true;
+			}
 			spinlock_release(&fh->fh_splk);
-			if(fh->ref_count == 0){ //|| !has_child) {// && i != 2){
+			if(no_refs){ //|| !has_child) {// && i != 2){
 				fh_destroy(fh);
 			}
 		}
@@ -806,6 +827,7 @@ int ft_close(int fd, struct file_table *ft, int *retval)
 	KASSERT(retval != NULL);
 	KASSERT(ft != NULL);
 	int err = 0;
+	bool no_refs = false;
 	struct file_handle *fh;
 
 	//Checks for valid fd. Note that fd's 0, 1, and 2 ARE ALLOWED.
@@ -830,12 +852,15 @@ int ft_close(int fd, struct file_table *ft, int *retval)
 	//IF THIS ref_count IS TOO HIGH, THEN MEMLEAKS WILL OCCUR!
 	spinlock_acquire(&fh->fh_splk);
 	fh->ref_count--;
-	spinlock_release(&fh->fh_splk);
 	if(fh->ref_count == 0)
+	{
+		no_refs = true;
+	}
+	spinlock_release(&fh->fh_splk);
+	if(no_refs)
 	{
 		fh_destroy(fh);
 	}
-
 	return err;
 }
 
@@ -987,7 +1012,7 @@ void fh_destroy(struct file_handle *fh)
 	fh->vnode = NULL;
 	fh->flags = 0;
 	fh->offset = 0;
-	fh->ref_count = 0;
+	KASSERT(fh->ref_count == 0);
 	kfree(fh->file_name);
 	kfree(fh);
 	return;
