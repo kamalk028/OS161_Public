@@ -148,7 +148,7 @@ struct proc {
 
 		/* add more material here as needed */
 	/* synch primitives for handling waitpid and exit */
-	struct spinlock exit_values_splk; //Mostly wont be used //Leaving it as of now //Remove it when you are sure
+	//struct spinlock exit_values_splk; //Mostly wont be used //Leaving it as of now //Remove it when you are sure
 	struct lock *parent_cvlock;
 	struct lock *child_cvlock; 
 	struct cv *parent_cv;

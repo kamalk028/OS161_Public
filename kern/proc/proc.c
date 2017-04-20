@@ -187,7 +187,7 @@ proc_create(const char *name)
 		kfree(proc);
 	}
 
-	spinlock_init(&proc->exit_values_splk);
+	//spinlock_init(&proc->exit_values_splk);
 
 	proc->p_numthreads = 0;
 	spinlock_init(&proc->p_lock);
@@ -321,12 +321,17 @@ proc_destroy(struct proc *proc)
 	//kprintf("Number of threads: %d", proc->p_numthreads);
 	proc->parent_proc = NULL;
 	KASSERT(proc->p_numthreads == 0);
+	//spinlock_cleanup(&proc->exit_values_splk);
 	spinlock_cleanup(&proc->p_lock);
 
 	//kfree(proc->vn);
 	kfree(proc->p_name);
 	//kfree(proc->child_exit_status);
 	//kfree(proc->exit_code);
+	if(proc->ppid == 0)
+	{
+		lock_destroy(pt_lock);
+	}
 	kfree(proc);
 }
 
@@ -989,6 +994,7 @@ int fh_open(const char *file, int flags, mode_t mode, struct file_handle *fh)
 	}
 	fh->flags = flags;
 	fh->ref_count++;//This should also be incremented with sys_fork.
+	kfree(dup_fname);
 	return 0;
 
 }
