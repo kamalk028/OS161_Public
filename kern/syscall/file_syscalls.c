@@ -995,17 +995,18 @@ int
 sys_sbrk(intptr_t amount, int *ret)
 {
 	unsigned int i = 0;
-	int err = 0;
-	int * kamount = 0;
+	//int err = 0;
+	int kamount= amount;
+	//kamount = amount;
 	struct as_region *r = NULL;
 
 	//First, get the integer copied in.
-	err = copyin((const_userptr_t)amount, kamount, 4);
+	/*err = copyin((const_userptr_t)amount, kamount, 4);
 	if (err)
 	{
 		*ret = err;
 		return err;
-	}
+	}*/
 
 	//Next, find the heap region in this proc's as_regions array.
 	while(r == NULL || r->start != (USERSTACK / 2))
@@ -1015,7 +1016,7 @@ sys_sbrk(intptr_t amount, int *ret)
 	}
 
 	//Now, move the top of the heap, provided kamount is valid.
-	if (*kamount % PAGE_SIZE != 0 || (r->end + (*kamount)) < (USERSTACK / 2))
+	if (kamount % PAGE_SIZE != 0 || (r->end + (kamount)) < (USERSTACK / 2))
 	{
 		kfree(r);
 		*ret = EINVAL;
@@ -1024,8 +1025,8 @@ sys_sbrk(intptr_t amount, int *ret)
 	//Expand (or shrink) the heap. Note: physical mem not alloc'd yet.
 	//If the heap is getting shrunk, it needs to free memory.
 	*ret = r->end;
-	r->end += (*kamount);
-	r->size += (*kamount / PAGE_SIZE);
+	r->end += (kamount);
+	r->size += (kamount / PAGE_SIZE);
 	return 0;
 }
 
