@@ -66,7 +66,12 @@ static unsigned int npages_used = 0;//Total number of coremap pages used by all 
 static unsigned int total_npages = 0;//Total number of pages in the core map.
 static struct spinlock cm_splk;
 
-
+static
+void
+as_zero_region(paddr_t paddr, unsigned npages)
+{
+	bzero((void *)PADDR_TO_KVADDR(paddr), npages * PAGE_SIZE);
+}
 static
 void
 dumbvm_can_sleep(void)
@@ -145,6 +150,7 @@ getppages(unsigned long npages)
 	}
 
 	npages_used+=npages;
+	as_zero_region(addr, npages);
 
 	if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
 	{
@@ -158,12 +164,6 @@ getppages(unsigned long npages)
 	return addr;
 }
 
-/*static
-void
-as_zero_region(paddr_t paddr, unsigned npages)
-{
-	bzero((void *)PADDR_TO_KVADDR(paddr), npages * PAGE_SIZE);
-}*/
 
 void
 coremap_init()

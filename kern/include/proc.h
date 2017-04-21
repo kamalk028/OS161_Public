@@ -69,7 +69,7 @@ int ft_read(int fd, void* buff, size_t bufflen, struct file_table* ft, int* retv
 int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int *retval);
 int ft_close(int fd, struct file_table *ft, int *retval);
 int ft_copy(int oldfd, int newfd, struct file_table *ft, int *retval);
-struct file_table* ft_copy_all(struct file_table* src, const char *child_name);
+struct file_table* ft_copy_all(struct file_table* src, struct file_table *dest);
 int ft_lseek(int fd, off_t offset, int whence, struct file_table* ft, off_t *retval);
 
 /*File Handle Declaration*/

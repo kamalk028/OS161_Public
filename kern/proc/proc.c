@@ -76,8 +76,7 @@ static struct lock *pt_lock;
 //You can acces element n of the array with pt[n].proc
 
 //Give the process table a pid, and it'll give you the pointer to the proc.
-struct proc *
-get_proc(int pid)
+struct proc *get_proc(int pid)
 {
 	struct proc *p;
 	if (pid >= MAX_PROC || pid < 0){
@@ -244,14 +243,19 @@ proc_destroy(struct proc *proc)
 	kfree(proc->tframe);
 	ft_destroy(proc->ft);
 
-	lock_destroy(proc->child_pids_lock);
 	//array_cleanup(proc->child_pids);
 	//int i=0;
+	lock_acquire(proc->child_pids_lock);
+	
 	while(array_num(proc->child_pids))
 	{
 		array_remove(proc->child_pids, 0);
 	}
 	array_destroy(proc->child_pids);
+	
+	lock_release(proc->child_pids_lock);
+	
+	lock_destroy(proc->child_pids_lock);
 
 	/*Destory primitives created for waitpid and exit syscalls*/
 	lock_destroy(proc->parent_cvlock);
@@ -266,10 +270,12 @@ proc_destroy(struct proc *proc)
 	 */
 
 	/* VFS fields */
+	spinlock_acquire(&curproc->p_lock);
 	if (proc->p_cwd) {
 		VOP_DECREF(proc->p_cwd);
 		proc->p_cwd = NULL;
 	}
+	spinlock_release(&curproc->p_lock);
 
 
 
@@ -458,7 +464,8 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 	spinlock_release(&curproc->p_lock);
 
 	/*Copy the parent's file table.*/
-	newproc->ft = ft_copy_all(curproc->ft, name);
+	newproc->ft = ft_copy_all(curproc->ft, newproc->ft);
+	newproc->ft->proc = newproc;
 
 	/* Update the process table and assign PID. */
 	lock_acquire(pt_lock);
@@ -669,6 +676,7 @@ void ft_destroy(struct file_table *ft)
 			}
 			spinlock_release(&fh->fh_splk);
 			if(no_refs){ //|| !has_child) {// && i != 2){
+				vfs_close(fh->vnode);
 				fh_destroy(fh);
 			}
 		}
@@ -758,7 +766,6 @@ int ft_read(int fd, void* buff, size_t bufflen, struct file_table* ft, int* retv
 	struct file_handle *fh;
 	fh = (struct file_handle*) array_get(ft->file_handle_arr, fd);
 	err = fh_read(buff, bufflen, fh, retval);
-	//Should we kfree(fh)?
 	return err;
 }
 
@@ -776,10 +783,11 @@ int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int
 	//err will now hold 0 unless fh_open failed.
 	if(err)
 	{
+		fh_destroy(fh);
 		*retval = -1; //This is supposedly not correct, but badcall-open is passing anyway.
 		return err;
 	}
-
+	
 	//New file handle is added to first element of file_handle_arr which contains NULL.
 	//  If none are found, then the array is expanded.
 	unsigned int i;
@@ -827,7 +835,6 @@ int ft_close(int fd, struct file_table *ft, int *retval)
 	KASSERT(retval != NULL);
 	KASSERT(ft != NULL);
 	int err = 0;
-	bool no_refs = false;
 	struct file_handle *fh;
 
 	//Checks for valid fd. Note that fd's 0, 1, and 2 ARE ALLOWED.
@@ -836,7 +843,7 @@ int ft_close(int fd, struct file_table *ft, int *retval)
 	{
 		err = EBADF;
 		*retval = -1;
-		return err;
+		return err;	
 	}
 
 	//Why is this type cast here?
@@ -852,6 +859,7 @@ int ft_close(int fd, struct file_table *ft, int *retval)
 	//IF THIS ref_count IS TOO HIGH, THEN MEMLEAKS WILL OCCUR!
 	spinlock_acquire(&fh->fh_splk);
 	fh->ref_count--;
+	bool no_refs = false;
 	if(fh->ref_count == 0)
 	{
 		no_refs = true;
@@ -859,8 +867,10 @@ int ft_close(int fd, struct file_table *ft, int *retval)
 	spinlock_release(&fh->fh_splk);
 	if(no_refs)
 	{
+		vfs_close(fh->vnode);
 		fh_destroy(fh);
 	}
+
 	return err;
 }
 
@@ -876,7 +886,7 @@ int ft_copy(int oldfd, int newfd, struct file_table *ft, int *retval)
 		return err;//Do nothing in this case.
 	}
 
-	//Do the usual check for valid fd on oldfd.
+	//Do the usual check for valid fd on oldfd. //NOTE: 0-2 ARE NOT ALLOWED! They probably should be, though. Even though that's crazy.
 	int num = array_num(ft->file_handle_arr);
 	if(oldfd < 0 || oldfd >= num || array_get(ft->file_handle_arr, oldfd) == NULL)
 	{
@@ -925,30 +935,8 @@ int ft_copy(int oldfd, int newfd, struct file_table *ft, int *retval)
 }
 
 //Copy all elements of a file table from src to dest. For use in sys_fork().
-struct file_table* ft_copy_all(struct file_table *src, const char *child_name)
+struct file_table* ft_copy_all(struct file_table *src, struct file_table* dest)
 {
-	struct file_table* dest;
-	dest = kmalloc(sizeof(*dest));
-	if(dest == NULL)
-	{
-		return NULL;
-	}
-	dest->proc_name = kstrdup(child_name);
-	if(dest->proc_name == NULL)
-	{
-		kfree(dest);
-		return NULL;
-	}
-	dest->file_handle_arr = array_create();
-	if(dest->file_handle_arr == NULL)
-	{
-		kfree(dest->proc_name);
-		kfree(dest);
-		return NULL;
-	}
-	array_init(dest->file_handle_arr);
-	dest->proc = NULL;//REMEMBER TO CHANGE THIS TO CHLID PID!!
-
 	//Actually begin copying.
 	unsigned int i = 0;
 	unsigned int filler = 0;//To avoid passing i as reference and non-reference (shouldn't matter).
@@ -1000,7 +988,7 @@ struct file_handle* fh_create(const char* file_name)
 	fh->offset = 0;
 	fh->flags = 0;
 	fh->ref_count = 0;//Number of processes using this file handle.
-
+	
 	return fh;
 }
 
@@ -1028,6 +1016,7 @@ int fh_open(const char *file, int flags, mode_t mode, struct file_handle *fh)
 	err = vfs_open(dup_fname, flags, mode, &fh->vnode);
 	if(err)//vfs_open should return 0 unless there was an error.
 	{
+		kfree(dup_fname);
 		kprintf("Inside fh_open: Error while opening file: %s with flag %d\n", file, flags);
 		return err;
 	}
@@ -1097,16 +1086,12 @@ int fh_read(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 	if(err)
 	{
 		lock_release(fh->fh_lock);
-		//kfree(&uio);
-		//kfree(&iov);//IF THE SYSTEM CRASHES, REMOVE THESE LINES!!
 		*retval = err;
 		return err;
 	}
 	fh->offset = uio.uio_offset;
 	*retval = bufflen - uio.uio_resid;
 	lock_release(fh->fh_lock);//spinlock_acquire(&fh->fh_splk);//spinlock_release(&fh->fh_splk);
-	//kfree(&uio);
-	//kfree(&iov);
 	return err;
 }
 
@@ -1171,22 +1156,15 @@ struct page_table *pt_create()
 {
 	struct page_table *pt;
 	pt = kmalloc(sizeof(*pt));
-	if (pt == NULL)
-	{
-		return NULL;
-	}
 	pt->pt_array = array_create();
-	if (pt->pt_array == NULL)
-	{
-		kfree(pt);
-		return NULL;
-	}
 	array_init(pt->pt_array);
 	return pt;
 }
 
 int pt_append(struct page_table *pt, struct page_table_entry *pte)
 {
+	KASSERT(pt != NULL);
+	KASSERT(pte != NULL);
 	unsigned int idx = 0;
 	return array_add(pt->pt_array, pte, &idx);
 }
@@ -1200,6 +1178,10 @@ struct page_table_entry *pte_create(uint32_t vpn, uint32_t ppn, uint8_t pm, bool
 {
 	struct page_table_entry *pte;
 	pte = kmalloc(sizeof(*pte));
+	if(pte == NULL)//KAMAL_CHECK: I have added this if loop, handle NULL case wherever the function is called.
+	{
+		return NULL;
+	}
 
 	pte->vpn = vpn;
 	pte->ppn = ppn;
@@ -1218,6 +1200,7 @@ int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn)
 	for (int i = 0; i<num; i++)
 	{
 		struct page_table_entry *pte = array_get(pt->pt_array, i);
+		//KAMAL_CHECK: what if the pte is NULL? 
 		if(vpn == pte->vpn)
 		{
 			if(pte->valid)

@@ -103,7 +103,7 @@ int sys_write(int fd, void *buff, size_t len, int *ret)
 		return EFAULT;
 	}
 	return ft_write(fd, buff, len, ft, ret);
-	kfree(buff);//THIS WOULD NOT GET REACHED!
+	//kfree(buff);
 }
 
 int sys_read(int fd, void* buff, size_t len, int* ret)
@@ -115,7 +115,6 @@ int sys_read(int fd, void* buff, size_t len, int* ret)
 	KASSERT(ft != NULL);
 	if (buff == NULL){
 		*ret = -1;
-		//Should we kfree(ft)?
 		return EFAULT;
 	}
 	return ft_read(fd, buff, len, ft, ret);
@@ -806,20 +805,25 @@ void sys__exit(int exitcode)
 	lock_release(curproc->child_cvlock);
 
 
-	/*Need to remove the pid from parents child_pids */
-	lock_acquire(curproc->parent_proc->child_pids_lock);
-	l = array_num(curproc->parent_proc->child_pids);
-	for(i=0; i<l; i++)
+	//TODO: Need to remove the pid from parents child_pids 
+	if(curproc->ppid > 1 && !curproc->has_parent_exited)
 	{
-		int t_pid = (int) array_get(curproc->parent_proc->child_pids, i);
-		if(t_pid == (int) curproc->pid){
-			array_remove(curproc->parent_proc->child_pids, i);
-			break;
+		lock_acquire(curproc->parent_proc->child_pids_lock);
+		l = array_num(curproc->parent_proc->child_pids);
+		for(i=0; i<l; i++)
+		{
+			int t_pid = (int) array_get(curproc->parent_proc->child_pids, i);
+			if(t_pid == (int) curproc->pid){
+				array_remove(curproc->parent_proc->child_pids, i);
+				break;
+			}
 		}
+		lock_release(curproc->parent_proc->child_pids_lock);
 	}
-	lock_release(curproc->parent_proc->child_pids_lock);
+
+
 	/*
-	*For all the pids in child_pids set has_parent_exited = true
+	*TODO: For all the pids in child_pids set has_parent_exited = true
 	*And release the child if it is waiting for the status to get updated
 	*/
 	//kprintf("CHILDREN OF THREAD: %s", curproc->p_name);
@@ -932,7 +936,6 @@ void sys__exit(int exitcode)
 /*int sys_execv(const_userptr_t program, const_userptr_t args, int *retval)
 {
 	*retval = 0;
-
 	KASSERT(curproc != NULL);
 	char kprogram[320];//copyinstr so the kernel can access the program name.
 	int copyerr;

@@ -304,6 +304,9 @@ void
 cv_destroy(struct cv *cv)
 {
 	KASSERT(cv != NULL);
+	spinlock_acquire(&cv->cv_splk);
+	KASSERT(wchan_isempty(cv->cv_wchan, &cv->cv_splk));
+	spinlock_release(&cv->cv_splk);
 	spinlock_cleanup(&cv->cv_splk);
 	wchan_destroy(cv->cv_wchan);
 	// We never asserted that the channel is empty when destroyed. Should we?
