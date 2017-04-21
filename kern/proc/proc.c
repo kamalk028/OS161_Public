@@ -59,6 +59,7 @@
 #include <kern/stat.h>
 #include <mips/trapframe.h>
 #include <synch.h>
+#include <file_syscalls.h>
 
 
 /*
@@ -376,6 +377,7 @@ proc_create_runprogram(const char *name)
 
 	/* Initialise console. */
 	ft_init(newproc->ft);
+	execv_lock = lock_create("execv_lock");
 
 	/* VM fields */
 
@@ -439,7 +441,13 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 	newproc->p_addrspace = NULL;
 
 	//spinlock_acquire(&curproc->p_lock);
-	as_copy(curproc->p_addrspace, &newproc->p_addrspace);
+	int t_err = as_copy(curproc->p_addrspace, &newproc->p_addrspace);
+	if(t_err)
+	{
+		*err = -1;
+		*err_code = ENOMEM;
+		return NULL;
+	}
 	//spinlock_release(&curproc->p_lock);
 
 	if(newproc->p_addrspace == NULL)

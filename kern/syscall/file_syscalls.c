@@ -40,7 +40,7 @@
 static char buffer[ARG_MAX];
 //static char *k_args[1000];
 //static char *stack_clone[1000];
-static struct lock *execv_lock = NULL;
+//static struct lock *execv_lock = NULL;
 static int arg_len_arr[3860];//Just enough to pass the bigexec test.
 
 int
@@ -225,7 +225,7 @@ int sys_execv(const char *program, char **args, int *retval)
 		*retval = EFAULT;
 		return EFAULT;
 	}
-	if(execv_lock == NULL)
+	/*if(execv_lock == NULL)
 	{
 		execv_lock = lock_create("execv_lock");
 		if(execv_lock == NULL)
@@ -233,7 +233,7 @@ int sys_execv(const char *program, char **args, int *retval)
 			*retval = ENOMEM;
 			return -1;
 		}
-	}
+	}*/
 	err = copyin((const_userptr_t) program, program_test, 10);
 	if(err)
 	{
@@ -417,7 +417,8 @@ int sys_execv(const char *program, char **args, int *retval)
 	}
 
 	/* Switch to it and activate it. */
-	proc_setas(as);
+	struct addrspace *tmp_as = proc_setas(as);
+	as_destroy(tmp_as);
 	as_activate();
 
 	/* Load the executable. */
