@@ -29,6 +29,7 @@
 #include <vfs.h>
 #include <kern/fcntl.h>
 #include <limits.h>
+#include <mips/tlb.h>
 
 
 //static struct cv *parent_cv;
@@ -39,7 +40,7 @@
 static char buffer[ARG_MAX];
 //static char *k_args[1000];
 //static char *stack_clone[1000];
-static struct lock *execv_lock = NULL;
+//static struct lock *execv_lock = NULL;
 static int arg_len_arr[3860];//Just enough to pass the bigexec test.
 
 int
@@ -224,7 +225,7 @@ int sys_execv(const char *program, char **args, int *retval)
 		*retval = EFAULT;
 		return EFAULT;
 	}
-	if(execv_lock == NULL)
+	/*if(execv_lock == NULL)
 	{
 		execv_lock = lock_create("execv_lock");
 		if(execv_lock == NULL)
@@ -232,7 +233,7 @@ int sys_execv(const char *program, char **args, int *retval)
 			*retval = ENOMEM;
 			return -1;
 		}
-	}
+	}*/
 	err = copyin((const_userptr_t) program, program_test, 10);
 	if(err)
 	{
@@ -416,7 +417,8 @@ int sys_execv(const char *program, char **args, int *retval)
 	}
 
 	/* Switch to it and activate it. */
-	proc_setas(as);
+	struct addrspace *tmp_as = proc_setas(as);
+	as_destroy(tmp_as);
 	as_activate();
 
 	/* Load the executable. */
@@ -572,7 +574,7 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	//  figure it out, && it to this while condition.
 	//For now, I'm assuming it'll all go to proc->exit_code.
 	lock_acquire(child->parent_cvlock);
-	while(child->exit_code == 4)//Apparently, 0-3 are reserved.
+	while(child->exit_code == -1)
 	{
 		cv_wait(child->parent_cv, child->parent_cvlock);
 	}
@@ -583,6 +585,7 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	//  was killed by a fatal signal or something.
 	int calc_status = 0;
 
+	/*
 	switch(child->exit_code)
 	{
 		case 0:
@@ -597,11 +600,19 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 		case 3:
 			calc_status = _MKWAIT_STOP(child->exit_code);
 		break;
+	}*/
+	if(child->exit_signal)
+	{
+		calc_status = _MKWAIT_SIG(child->exit_code);
+	}
+	else
+	{
+		calc_status = _MKWAIT_EXIT(child->exit_code);
 	}
 	if(status != NULL)
 	{
-		//*status = calc_status;	
-		*status = _MKWAIT_EXIT(child->exit_code); //Brute force: Please change it back
+		*status = calc_status;	
+		//*status = _MKWAIT_EXIT(child->exit_code); //Brute force: Please change it back
 	}
 	//Add the other two or three cases here. CHECK thread.c TO SEE IF THOSE PROVIDE CASES!
 	//Not sure how to handle __WSTOPPED...
@@ -1019,7 +1030,7 @@ sys_sbrk(intptr_t amount, int *ret)
 	if (kamount % PAGE_SIZE != 0 || (r->end + (kamount)) < (USERSTACK / 2)
 		|| (r->end + kamount) > USERSTACK - (1024 * PAGE_SIZE))
 	{
-		kfree(r);
+		//kfree(r);
 		*ret = EINVAL;
 		return EINVAL;
 	}
@@ -1033,12 +1044,13 @@ sys_sbrk(intptr_t amount, int *ret)
 	//Only way to find out what was used is to scan the page table...
 	/*if (kamount < 0)
 	{
+		unsigned idx = 0;
 		vaddr_t vpn;
 		paddr_t ppn = 0;
 		int not_found = 0;
 		for (vpn = r->end; vpn < (r->end - kamount); vpn+=PAGE_SIZE)
 		{
-			not_found = pt_lookup(curproc->p_addrspace->pt, vpn, r->permission, &ppn);
+			not_found = pt_lookup1(curproc->p_addrspace->pt, vpn, r->permission, &ppn, &idx);
 			if (not_found)
 			{
 				;
@@ -1047,6 +1059,14 @@ sys_sbrk(intptr_t amount, int *ret)
 			{
 				//Need to update TLB and pte.
 				free_ppages(ppn);
+				struct page_table_entry* pte = array_get(curproc->p_addrspace->pt->pt_array,idx);
+				kfree(pte);
+				array_remove(curproc->p_addrspace->pt->pt_array,idx);
+				int t = tlb_probe(vpn, ppn);
+				if(t > -1)
+				{
+					tlb_write(TLBHI_INVALID(t), TLBLO_INVALID(), t);
+				}
 			}
 		}
 	}*/

@@ -59,6 +59,7 @@
 #include <kern/stat.h>
 #include <mips/trapframe.h>
 #include <synch.h>
+#include <file_syscalls.h>
 
 
 /*
@@ -211,7 +212,8 @@ proc_create(const char *name)
 	//NOTE: Changed exit_status to reflect own process instead of child.
 	//  That is because a process can have more than one child!
 	proc->exit_status = -1;//Returned by waitpid() after child exits.
-	proc->exit_code = 4;//User provides a value here before process exits.
+	proc->exit_code = -1;//User provides a value here before process exits.
+	proc->exit_signal = false;
 
 //	proc->ft = ft_create(proc->p_name);
 
@@ -375,6 +377,7 @@ proc_create_runprogram(const char *name)
 
 	/* Initialise console. */
 	ft_init(newproc->ft);
+	execv_lock = lock_create("execv_lock");
 
 	/* VM fields */
 
@@ -438,7 +441,13 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 	newproc->p_addrspace = NULL;
 
 	//spinlock_acquire(&curproc->p_lock);
-	as_copy(curproc->p_addrspace, &newproc->p_addrspace);
+	int t_err = as_copy(curproc->p_addrspace, &newproc->p_addrspace);
+	if(t_err)
+	{
+		*err = -1;
+		*err_code = ENOMEM;
+		return NULL;
+	}
 	//spinlock_release(&curproc->p_lock);
 
 	if(newproc->p_addrspace == NULL)
@@ -1190,6 +1199,33 @@ struct page_table_entry *pte_create(uint32_t vpn, uint32_t ppn, uint8_t pm, bool
 	pte->valid = valid;
 	pte->ref = ref;
 	return pte;
+}
+
+int pt_lookup1 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, unsigned *idx)
+{
+	(void)pm;
+	int num = array_num(pt->pt_array);
+	//bool has_entry = 0;
+	for (int i = 0; i<num; i++)
+	{
+		struct page_table_entry *pte = array_get(pt->pt_array, i);
+		//KAMAL_CHECK: what if the pte is NULL? 
+		if(vpn == pte->vpn)
+		{
+			if(pte->valid)
+			{
+				*ppn = pte->ppn;
+				pte->ref = 1;
+				*idx = i;
+				return 0;
+			} 
+		}
+		else
+		{
+			pte->ref = 0;//While implementing swapping, CHANGE THIS FUNCTION so that it starts the lookup where the last one left off.
+		}
+	}
+	return -1; //This means no page table entry for given vpn.
 }
 
 int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn)

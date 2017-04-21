@@ -40,6 +40,7 @@
 #include <mainbus.h>
 #include <syscall.h>
 #include <file_syscalls.h>//Ryan added this, so kill_curthread could call sys__exit(1).
+#include <proc.h>
 
 
 /* in exception-*.S */
@@ -130,7 +131,8 @@ kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
 	kprintf("Fatal user mode trap %u sig %d (%s, epc 0x%x, vaddr 0x%x)\n",
 		code, sig, trapcodenames[code], epc, vaddr);
 
-	sys__exit(1);
+	curproc->exit_signal = true;
+	sys__exit(sig);
 
 	//Code shouldn't reach here anymore.
 	panic("I don't know how to handle this\n");
