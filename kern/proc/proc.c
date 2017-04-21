@@ -367,7 +367,6 @@ struct proc *
 proc_create_runprogram(const char *name)
 {
 	struct proc *newproc;
-	spinlock_init(&ctr_splk);
 
 	newproc = proc_create(name);
 	if (newproc == NULL) {
