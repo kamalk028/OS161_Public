@@ -1016,7 +1016,8 @@ sys_sbrk(intptr_t amount, int *ret)
 	}
 
 	//Now, move the top of the heap, provided kamount is valid.
-	if (kamount % PAGE_SIZE != 0 || (r->end + (kamount)) < (USERSTACK / 2))
+	if (kamount % PAGE_SIZE != 0 || (r->end + (kamount)) < (USERSTACK / 2)
+		|| (r->end + kamount) > USERSTACK - (1024 * PAGE_SIZE))
 	{
 		kfree(r);
 		*ret = EINVAL;
@@ -1030,7 +1031,7 @@ sys_sbrk(intptr_t amount, int *ret)
 
 	//If the heap is being shrunk, we need to free physical pages it used.
 	//Only way to find out what was used is to scan the page table...
-	if (kamount < 0)
+	/*if (kamount < 0)
 	{
 		vaddr_t vpn;
 		paddr_t ppn = 0;
@@ -1044,10 +1045,11 @@ sys_sbrk(intptr_t amount, int *ret)
 			}
 			else
 			{
+				//Need to update TLB and pte.
 				free_ppages(ppn);
 			}
 		}
-	}
+	}*/
 	return 0;
 }
 
