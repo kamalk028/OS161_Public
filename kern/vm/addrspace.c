@@ -512,6 +512,10 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	if (err)//If no pte was found, allocate some physical memory.
 	{
 		paddr = getppages(1);
+		if (paddr == 0)
+		{
+			return ENOMEM;
+		}
 		//ppn = copy_fa - MIPS_KSEG0;
 		ppn = paddr & PAGE_FRAME;
 		struct page_table_entry *pte = pte_create(vpn, ppn, as_region->permission, 1, 1, 0);
@@ -578,10 +582,21 @@ as_create(void)
 	 */
 
 	as->as_regions = array_create();
+	if (as->as_regions == NULL)
+	{
+		kfree(as);
+		return NULL;
+	}
 	array_init(as->as_regions);
 	//as->next_start = 0x00000000; //We were originally going to disallow the passing of vaddr into define_region().
 	//as->stack_start = USERSTACK; //Default 0x7fffffff, I think.
 	as->pt = pt_create(); //This effectively initializes an array.
+	if (as->pt == NULL)
+	{
+		array_destroy(as->as_regions);
+		kfree(as);
+		return NULL;
+	}
 	//May add heap declaration here, as well.
 
 	return as;
@@ -682,7 +697,20 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	{
 		pte = array_get(old->pt->pt_array, i);
 		newppn = getppages(1);
+		if (newppn == 0)
+		{
+			kfree(newas);
+			(void)*ret;
+			return ENOMEM;
+		}
 		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
+		if (newpte == NULL)
+		{
+			free_ppages(newppn);
+			kfree(newas);
+			(void)*ret;
+			return ENOMEM;
+		}
 		pt_append(newas->pt, newpte);
 		//New: 3rd attempt: Copy the actual contents of memory in the physical pages.
 		//TODO: Maybe put a lock on these? Copying memory while it's being wirtten would break stuff...

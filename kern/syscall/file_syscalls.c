@@ -165,6 +165,7 @@ sys_fork(int *ret)
 
 	if (result){
 		//kprintf("Thread fork failed!");
+		*ret = result;
 		return -1;
 	}
 
@@ -175,6 +176,7 @@ sys_fork(int *ret)
 	else
 	{
 		//kprintf("Control shouldn't reach here:::");
+		*ret = EINVAL;//I just put a random error code here.
 		return -1;
 	}
 }
