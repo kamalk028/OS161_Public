@@ -1022,6 +1022,7 @@ sys_sbrk(intptr_t amount, int *ret)
 		return EINVAL;
 	}
 	//Expand (or shrink) the heap. Note: physical mem not alloc'd yet.
+	//If the heap is getting shrunk, it needs to free memory.
 	*ret = r->end;
 	r->end += (*kamount);
 	r->size += (*kamount / PAGE_SIZE);
