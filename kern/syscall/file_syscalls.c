@@ -164,7 +164,7 @@ sys_fork(int *ret)
 	result = thread_fork(name, newproc, enter_forked_process, tf, 0);
 
 	if (result){
-		//kprintf("Thread fork failed!");
+		*ret = result;
 		return -1;
 	}
 

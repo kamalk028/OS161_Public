@@ -578,10 +578,21 @@ as_create(void)
 	 */
 
 	as->as_regions = array_create();
+	if(as->as_regions == NULL)
+	{
+		kfree(as);
+		return NULL;
+	}
 	array_init(as->as_regions);
 	//as->next_start = 0x00000000; //We were originally going to disallow the passing of vaddr into define_region().
 	//as->stack_start = USERSTACK; //Default 0x7fffffff, I think.
 	as->pt = pt_create(); //This effectively initializes an array.
+	if(as->pt == NULL)
+	{
+		array_destroy(as->as_regions);
+		kfree(as);
+		return NULL;
+	}
 	//May add heap declaration here, as well.
 
 	return as;
@@ -662,7 +673,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		err = as_define_region(newas, r->start, (r->size * PAGE_SIZE), read, write, exec);
 		if (err)
 		{
-			kfree(newas);
+			as_destroy(newas);//kfree(newas);
 			(void)*ret;
 			return err;
 		}
@@ -682,7 +693,18 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	{
 		pte = array_get(old->pt->pt_array, i);
 		newppn = getppages(1);
+		if(newppn == 0)
+		{
+			as_destroy(newas);//kfree(newas);
+			return ENOMEM;
+		}
 		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
+		if(newpte == NULL)
+		{
+			free_ppages(newppn);
+			as_destroy(newas);//kfree(newas);
+			return ENOMEM;
+		}
 		pt_append(newas->pt, newpte);
 		//New: 3rd attempt: Copy the actual contents of memory in the physical pages.
 		//TODO: Maybe put a lock on these? Copying memory while it's being wirtten would break stuff...
@@ -724,6 +746,11 @@ as_destroy(struct addrspace *as)
 		pte = array_get(as->pt->pt_array, 0);
 		//kfree((void *)pte->ppn);
 		free_ppages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
+		/*int t = tlb_probe(pte->vpn, pte->ppn);
+		if(t > -1)
+		{
+			tlb_write(TLBHI_INVALID(t), TLBLO_INVALID(), t);
+		}*/
 		kfree(pte);
 		array_remove(as->pt->pt_array, 0);
 	}
@@ -844,6 +871,10 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t memsize,
 	vaddr -= offset;
 	//Allocate memory just for the attributes of as_region, NOT the memory it will request.
 	newregion = kmalloc(sizeof(struct as_region));
+	if(newregion == NULL)
+	{
+		return ENOMEM;
+	}
 	unsigned int i = 0;
 	unsigned int page_num = 0;
 	vaddr_t page_start = vaddr; //Used for verifying that each requested virtual page doesn't belong to another region.

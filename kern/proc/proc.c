@@ -445,7 +445,7 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 	if(t_err)
 	{
 		*err = -1;
-		*err_code = ENOMEM;
+		*err_code = t_err;
 		return NULL;
 	}
 	//spinlock_release(&curproc->p_lock);
@@ -506,7 +506,14 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 	unsigned idx = 0;
 	//Acquire lock and proceed
 	lock_acquire(curproc->child_pids_lock);
-	array_add(curproc->child_pids, (void *)newproc->pid, &idx);
+	t_err = array_add(curproc->child_pids, (void *)newproc->pid, &idx);
+	if(t_err)
+	{
+		lock_release(curproc->child_pids_lock);
+		*err = -1;
+		*err_code = t_err;
+		return NULL;
+	}
 	lock_release(curproc->child_pids_lock);
 
 	return newproc;
@@ -1172,10 +1179,35 @@ struct page_table *pt_create()
 {
 	struct page_table *pt;
 	pt = kmalloc(sizeof(*pt));
+	if(pt == NULL)
+	{
+		return NULL;
+	}
 	pt->pt_array = array_create();
+	if(pt->pt_array == NULL)
+	{
+		kfree(pt);
+		return NULL;
+	}
 	array_init(pt->pt_array);
 	return pt;
 }
+
+/*void pt_destroy(struct page_table* pt)
+{
+	while(array_num(pt->pt_array) > 0)
+	{
+		struct page_table_entry* pte = array_get(pt->pt_array, 0);
+		array_remove(pt->pt_array,0);
+
+		if(pte != NULL)
+		{
+			kfree(pte);
+		}
+	}
+	array_destroy(pt->pt_array);
+	kfree(pt);
+}*/
 
 int pt_append(struct page_table *pt, struct page_table_entry *pte)
 {
