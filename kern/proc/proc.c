@@ -488,9 +488,16 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 	if (next_pid >= MAX_PROC || pt[next_pid].proc != NULL)
 	{
 		next_pid = 2;
-		while(pt[next_pid].proc != NULL)
+		while(pt[next_pid].proc != NULL && next_pid < MAX_PROC)
 		{
 			next_pid++;
+		}
+		if(next_pid == MAX_PROC)
+		{
+			lock_release(pt_lock);
+			*err = -1;
+			*err_code = ENPROC;
+			return NULL;
 		}
 	}
 	lock_release(pt_lock);

@@ -153,7 +153,7 @@ sys_fork(int *ret)
 	newproc = proc_fork_runprogram(name, &err, &err_code);
 	if(err)
 	{
-		*ret = ENOMEM;
+		*ret = err_code;
 		return -1;
 	}
 	//kprintf("Newly forked process: pid value: %d\n",newproc->pid);
@@ -1027,13 +1027,18 @@ sys_sbrk(intptr_t amount, int *ret)
 	}
 
 	//Now, move the top of the heap, provided kamount is valid.
-	if (kamount % PAGE_SIZE != 0 || (r->end + (kamount)) < (USERSTACK / 2)
-		|| (r->end + kamount) > USERSTACK - (1024 * PAGE_SIZE))
+	if (((kamount % PAGE_SIZE) != 0) || ((r->end + (kamount)) < (USERSTACK / 2)))
 	{
 		//kfree(r);
 		*ret = EINVAL;
 		return EINVAL;
 	}
+	if ((r->end + kamount) > USERSTACK - (1024 * PAGE_SIZE))
+	{
+		*ret = ENOMEM;
+		return ENOMEM;
+	}	
+
 	//Expand (or shrink) the heap. Note: physical mem not alloc'd yet.
 	//If the heap is getting shrunk, it needs to free memory.
 	*ret = r->end;
@@ -1042,7 +1047,7 @@ sys_sbrk(intptr_t amount, int *ret)
 
 	//If the heap is being shrunk, we need to free physical pages it used.
 	//Only way to find out what was used is to scan the page table...
-	/*if (kamount < 0)
+	if (kamount < 0)
 	{
 		unsigned idx = 0;
 		vaddr_t vpn;
@@ -1069,7 +1074,7 @@ sys_sbrk(intptr_t amount, int *ret)
 				}
 			}
 		}
-	}*/
+	}
 	return 0;
 }
 
