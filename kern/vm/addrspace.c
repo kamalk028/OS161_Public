@@ -51,7 +51,7 @@
  * used. The cheesy hack versions in dumbvm.c are used instead.
  */
 
- #define DUMBVM_STACKPAGES    18
+ #define DUMBVM_STACKPAGES    1024
  #define FREE_STATE 0
  #define FIXED_STATE 1
  #define DIRTY_STATE 2
@@ -472,7 +472,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 			as_region = r; //This copy is used after r is modified.
 			//If faultaddress is close to the bottom of the stack, grow the stack!
 			//Assumption: stack will be the only region past USERSTACK*3/4.
-			if ((faultaddress > (USERSTACK * 3 / 4)) && (faultaddress == r->start))
+			/*if ((faultaddress > (USERSTACK * 3 / 4)) && (faultaddress == r->start))
 			{
 				//Make sure the stack won't meet the heap if expanded.
 				//  Heap is always defined right after stack, so we can find it in the array.
@@ -486,7 +486,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 				as_region->start -= 6 * PAGE_SIZE;
 				as_region->size += 6;
 				//NOT CERTAIN THAT UPDATING as_region ALSO UPDATES THE REAL REGION!!
-			}
+			}*/
 			break;
 		}
 	}
@@ -685,6 +685,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
 		pt_append(newas->pt, newpte);
 		//New: 3rd attempt: Copy the actual contents of memory in the physical pages.
+		//TODO: Maybe put a lock on these? Copying memory while it's being wirtten would break stuff...
 		memmove((void *)PADDR_TO_KVADDR(newpte->ppn),
 			(const void *)PADDR_TO_KVADDR(pte->ppn),
 			PAGE_SIZE);
@@ -721,6 +722,7 @@ as_destroy(struct addrspace *as)
 	while(array_num(as->pt->pt_array))
 	{
 		pte = array_get(as->pt->pt_array, 0);
+		//kfree((void *)pte->ppn);
 		free_ppages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
 		kfree(pte);
 		array_remove(as->pt->pt_array, 0);
@@ -733,6 +735,7 @@ as_destroy(struct addrspace *as)
 void
 as_activate(void)
 {
+	//All this does is invalidate a previous proc's TLB entries.
 	int i, spl;
 	struct addrspace *as;
 
@@ -768,6 +771,16 @@ as_deactivate(void)
 	 * anything. See proc.c for an explanation of why it (might)
 	 * be needed.
 	 */
+	//I'll make this clear the TLB just in case.
+	int i, spl;
+	spl = splhigh();
+
+	for (i=0; i<NUM_TLB; i++) {
+		tlb_write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+	}
+
+	splx(spl);
+	
 }
 
 /*
