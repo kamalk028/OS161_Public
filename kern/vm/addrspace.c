@@ -51,7 +51,7 @@
  * used. The cheesy hack versions in dumbvm.c are used instead.
  */
 
- #define DUMBVM_STACKPAGES    18
+ #define DUMBVM_STACKPAGES    1024
  #define FREE_STATE 0
  #define FIXED_STATE 1
  #define DIRTY_STATE 2
@@ -472,7 +472,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 			as_region = r; //This copy is used after r is modified.
 			//If faultaddress is close to the bottom of the stack, grow the stack!
 			//Assumption: stack will be the only region past USERSTACK*3/4.
-			if ((faultaddress > (USERSTACK * 3 / 4)) && (faultaddress == r->start))
+			/*if ((faultaddress > (USERSTACK * 3 / 4)) && (faultaddress == r->start))
 			{
 				//Make sure the stack won't meet the heap if expanded.
 				//  Heap is always defined right after stack, so we can find it in the array.
@@ -486,7 +486,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 				as_region->start -= 6 * PAGE_SIZE;
 				as_region->size += 6;
 				//NOT CERTAIN THAT UPDATING as_region ALSO UPDATES THE REAL REGION!!
-			}
+			}*/
 			break;
 		}
 	}
