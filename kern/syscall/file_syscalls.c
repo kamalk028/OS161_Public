@@ -1027,6 +1027,27 @@ sys_sbrk(intptr_t amount, int *ret)
 	*ret = r->end;
 	r->end += (kamount);
 	r->size += (kamount / PAGE_SIZE);
+
+	//If the heap is being shrunk, we need to free physical pages it used.
+	//Only way to find out what was used is to scan the page table...
+	if (kamount < 0)
+	{
+		vaddr_t vpn;
+		paddr_t ppn = 0;
+		int not_found = 0;
+		for (vpn = r->end; vpn < (r->end - kamount); vpn+=PAGE_SIZE)
+		{
+			not_found = pt_lookup(curproc->p_addrspace->pt, vpn, r->permission, &ppn);
+			if (not_found)
+			{
+				;
+			}
+			else
+			{
+				free_ppages(ppn);
+			}
+		}
+	}
 	return 0;
 }
 
