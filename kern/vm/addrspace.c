@@ -512,10 +512,10 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	if (err)//If no pte was found, allocate some physical memory.
 	{
 		paddr = getppages(1);
-		if (paddr == 0)
+		/*if (paddr == 0)
 		{
 			return ENOMEM;
-		}
+		}*/
 		//ppn = copy_fa - MIPS_KSEG0;
 		ppn = paddr & PAGE_FRAME;
 		struct page_table_entry *pte = pte_create(vpn, ppn, as_region->permission, 1, 1, 0);
@@ -582,7 +582,7 @@ as_create(void)
 	 */
 
 	as->as_regions = array_create();
-	if (as->as_regions == NULL)
+	if(as->as_regions == NULL)
 	{
 		kfree(as);
 		return NULL;
@@ -591,7 +591,7 @@ as_create(void)
 	//as->next_start = 0x00000000; //We were originally going to disallow the passing of vaddr into define_region().
 	//as->stack_start = USERSTACK; //Default 0x7fffffff, I think.
 	as->pt = pt_create(); //This effectively initializes an array.
-	if (as->pt == NULL)
+	if(as->pt == NULL)
 	{
 		array_destroy(as->as_regions);
 		kfree(as);
@@ -677,7 +677,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		err = as_define_region(newas, r->start, (r->size * PAGE_SIZE), read, write, exec);
 		if (err)
 		{
-			kfree(newas);
+			as_destroy(newas);//kfree(newas);
 			(void)*ret;
 			return err;
 		}
@@ -697,18 +697,16 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	{
 		pte = array_get(old->pt->pt_array, i);
 		newppn = getppages(1);
-		if (newppn == 0)
+		if(newppn == 0)
 		{
-			kfree(newas);
-			(void)*ret;
+			as_destroy(newas);//kfree(newas);
 			return ENOMEM;
 		}
 		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
-		if (newpte == NULL)
+		if(newpte == NULL)
 		{
 			free_ppages(newppn);
-			kfree(newas);
-			(void)*ret;
+			as_destroy(newas);//kfree(newas);
 			return ENOMEM;
 		}
 		pt_append(newas->pt, newpte);
@@ -752,6 +750,11 @@ as_destroy(struct addrspace *as)
 		pte = array_get(as->pt->pt_array, 0);
 		//kfree((void *)pte->ppn);
 		free_ppages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
+		/*int t = tlb_probe(pte->vpn, pte->ppn);
+		if(t > -1)
+		{
+			tlb_write(TLBHI_INVALID(t), TLBLO_INVALID(), t);
+		}*/
 		kfree(pte);
 		array_remove(as->pt->pt_array, 0);
 	}
@@ -872,6 +875,10 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t memsize,
 	vaddr -= offset;
 	//Allocate memory just for the attributes of as_region, NOT the memory it will request.
 	newregion = kmalloc(sizeof(struct as_region));
+	if(newregion == NULL)
+	{
+		return ENOMEM;
+	}
 	unsigned int i = 0;
 	unsigned int page_num = 0;
 	vaddr_t page_start = vaddr; //Used for verifying that each requested virtual page doesn't belong to another region.
