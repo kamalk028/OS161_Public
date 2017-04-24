@@ -29,6 +29,7 @@
 #include <vfs.h>
 #include <kern/fcntl.h>
 #include <limits.h>
+#include <mips/tlb.h>
 
 
 //static struct cv *parent_cv;
@@ -39,7 +40,7 @@
 static char buffer[ARG_MAX];
 //static char *k_args[1000];
 //static char *stack_clone[1000];
-static struct lock *execv_lock = NULL;
+//static struct lock *execv_lock = NULL;
 static int arg_len_arr[3860];//Just enough to pass the bigexec test.
 
 int
@@ -103,6 +104,7 @@ int sys_write(int fd, void *buff, size_t len, int *ret)
 		return EFAULT;
 	}
 	return ft_write(fd, buff, len, ft, ret);
+	//kfree(buff);
 }
 
 int sys_read(int fd, void* buff, size_t len, int* ret)
@@ -151,18 +153,18 @@ sys_fork(int *ret)
 	newproc = proc_fork_runprogram(name, &err, &err_code);
 	if(err)
 	{
-		*ret = ENOMEM;
+		*ret = err_code;
 		return -1;
 	}
 	//kprintf("Newly forked process: pid value: %d\n",newproc->pid);
 
 	//NOTE: Args 3, 4, and 5 most likely should be changed.
-	struct trapframe *tf;
+	struct trapframe *tf=NULL;
 	tf = newproc->tframe;
 	result = thread_fork(name, newproc, enter_forked_process, tf, 0);
 
 	if (result){
-		//kprintf("Thread fork failed!");
+		*ret = result;
 		return -1;
 	}
 
@@ -173,6 +175,7 @@ sys_fork(int *ret)
 	else
 	{
 		//kprintf("Control shouldn't reach here:::");
+		*ret = EINVAL;//I just put a random error code here.
 		return -1;
 	}
 }
@@ -223,7 +226,7 @@ int sys_execv(const char *program, char **args, int *retval)
 		*retval = EFAULT;
 		return EFAULT;
 	}
-	if(execv_lock == NULL)
+	/*if(execv_lock == NULL)
 	{
 		execv_lock = lock_create("execv_lock");
 		if(execv_lock == NULL)
@@ -231,7 +234,7 @@ int sys_execv(const char *program, char **args, int *retval)
 			*retval = ENOMEM;
 			return -1;
 		}
-	}
+	}*/
 	err = copyin((const_userptr_t) program, program_test, 10);
 	if(err)
 	{
@@ -415,7 +418,8 @@ int sys_execv(const char *program, char **args, int *retval)
 	}
 
 	/* Switch to it and activate it. */
-	proc_setas(as);
+	struct addrspace *tmp_as = proc_setas(as);
+	as_destroy(tmp_as);
 	as_activate();
 
 	/* Load the executable. */
@@ -571,7 +575,7 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	//  figure it out, && it to this while condition.
 	//For now, I'm assuming it'll all go to proc->exit_code.
 	lock_acquire(child->parent_cvlock);
-	while(child->exit_code == 4)//Apparently, 0-3 are reserved.
+	while(child->exit_code == -1)
 	{
 		cv_wait(child->parent_cv, child->parent_cvlock);
 	}
@@ -582,6 +586,7 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 	//  was killed by a fatal signal or something.
 	int calc_status = 0;
 
+	/*
 	switch(child->exit_code)
 	{
 		case 0:
@@ -596,11 +601,19 @@ sys_waitpid(int pid, int *status, int options, int *ret)
 		case 3:
 			calc_status = _MKWAIT_STOP(child->exit_code);
 		break;
+	}*/
+	if(child->exit_signal)
+	{
+		calc_status = _MKWAIT_SIG(child->exit_code);
+	}
+	else
+	{
+		calc_status = _MKWAIT_EXIT(child->exit_code);
 	}
 	if(status != NULL)
 	{
-		//*status = calc_status;	
-		*status = _MKWAIT_EXIT(child->exit_code); //Brute force: Please change it back
+		*status = calc_status;	
+		//*status = _MKWAIT_EXIT(child->exit_code); //Brute force: Please change it back
 	}
 	//Add the other two or three cases here. CHECK thread.c TO SEE IF THOSE PROVIDE CASES!
 	//Not sure how to handle __WSTOPPED...
@@ -804,18 +817,23 @@ void sys__exit(int exitcode)
 	lock_release(curproc->child_cvlock);
 
 
-	/*TODO: Need to remove the pid from parents child_pids */
-	lock_acquire(curproc->parent_proc->child_pids_lock);
-	l = array_num(curproc->parent_proc->child_pids);
-	for(i=0; i<l; i++)
+	//TODO: Need to remove the pid from parents child_pids 
+	if(curproc->ppid > 1 && !curproc->has_parent_exited)
 	{
-		int t_pid = (int) array_get(curproc->parent_proc->child_pids, i);
-		if(t_pid == (int) curproc->pid){
-			array_remove(curproc->parent_proc->child_pids, i);
-			break;
+		lock_acquire(curproc->parent_proc->child_pids_lock);
+		l = array_num(curproc->parent_proc->child_pids);
+		for(i=0; i<l; i++)
+		{
+			int t_pid = (int) array_get(curproc->parent_proc->child_pids, i);
+			if(t_pid == (int) curproc->pid){
+				array_remove(curproc->parent_proc->child_pids, i);
+				break;
+			}
 		}
+		lock_release(curproc->parent_proc->child_pids_lock);
 	}
-	lock_release(curproc->parent_proc->child_pids_lock);
+
+
 	/*
 	*TODO: For all the pids in child_pids set has_parent_exited = true
 	*And release the child if it is waiting for the status to get updated
@@ -984,6 +1002,82 @@ void sys__exit(int exitcode)
 	*retval = -1;
 	return err;
 }*/
+
+int
+sys_sbrk(intptr_t amount, int *ret)
+{
+	unsigned int i = 0;
+	//int err = 0;
+	int kamount= amount;
+	//kamount = amount;
+	struct as_region *r = NULL;
+
+	//First, get the integer copied in.
+	/*err = copyin((const_userptr_t)amount, kamount, 4);
+	if (err)
+	{
+		*ret = err;
+		return err;
+	}*/
+
+	//Next, find the heap region in this proc's as_regions array.
+	while(r == NULL || r->start != (USERSTACK / 2))
+	{
+		r = array_get(curproc->p_addrspace->as_regions, i);
+		i++;
+	}
+
+	//Now, move the top of the heap, provided kamount is valid.
+	if (((kamount % PAGE_SIZE) != 0) || ((r->end + (kamount)) < (USERSTACK / 2)))
+	{
+		//kfree(r);
+		*ret = EINVAL;
+		return EINVAL;
+	}
+	if ((r->end + kamount) > USERSTACK - (1024 * PAGE_SIZE))
+	{
+		*ret = ENOMEM;
+		return ENOMEM;
+	}	
+
+	//Expand (or shrink) the heap. Note: physical mem not alloc'd yet.
+	//If the heap is getting shrunk, it needs to free memory.
+	*ret = r->end;
+	r->end += (kamount);
+	r->size += (kamount / PAGE_SIZE);
+
+	//If the heap is being shrunk, we need to free physical pages it used.
+	//Only way to find out what was used is to scan the page table...
+	if (kamount < 0)
+	{
+		unsigned idx = 0;
+		vaddr_t vpn;
+		paddr_t ppn = 0;
+		int not_found = 0;
+		for (vpn = r->end; vpn < (r->end - kamount); vpn+=PAGE_SIZE)
+		{
+			not_found = pt_lookup1(curproc->p_addrspace->pt, vpn, r->permission, &ppn, &idx);
+			if (not_found)
+			{
+				;
+			}
+			else
+			{
+				//Need to update TLB and pte.
+				free_ppages(ppn);
+				struct page_table_entry* pte = array_get(curproc->p_addrspace->pt->pt_array,idx);
+				kfree(pte);
+				array_remove(curproc->p_addrspace->pt->pt_array,idx);
+				int t = tlb_probe(vpn, ppn);
+				if(t > -1)
+				{
+					tlb_write(TLBHI_INVALID(t), TLBLO_INVALID(), t);
+				}
+			}
+		}
+	}
+	return 0;
+}
 
 uint64_t to64(uint32_t high, uint32_t low)
 {

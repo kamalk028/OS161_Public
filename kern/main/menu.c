@@ -44,6 +44,7 @@
 #include <syscall.h>
 #include <test.h>
 #include <prompt.h>
+#include <file_syscalls.h>
 #include "opt-sfs.h"
 #include "opt-net.h"
 #include "opt-synchprobs.h"
@@ -147,6 +148,7 @@ common_prog(int nargs, char **args)
 	// Wait for all threads to finish cleanup, otherwise khu be a bit behind,
 	// especially once swapping is enabled.
 	thread_wait_for_count(tc);
+	lock_destroy(execv_lock);
 
 	return 0;
 }

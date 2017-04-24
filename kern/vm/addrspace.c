@@ -51,7 +51,7 @@
  * used. The cheesy hack versions in dumbvm.c are used instead.
  */
 
- #define DUMBVM_STACKPAGES    18
+ #define DUMBVM_STACKPAGES    1024
  #define FREE_STATE 0
  #define FIXED_STATE 1
  #define DIRTY_STATE 2
@@ -66,7 +66,12 @@ static unsigned int npages_used = 0;//Total number of coremap pages used by all 
 static unsigned int total_npages = 0;//Total number of pages in the core map.
 static struct spinlock cm_splk;
 
-
+static
+void
+as_zero_region(paddr_t paddr, unsigned npages)
+{
+	bzero((void *)PADDR_TO_KVADDR(paddr), npages * PAGE_SIZE);
+}
 static
 void
 dumbvm_can_sleep(void)
@@ -120,6 +125,7 @@ getppages(unsigned long npages)
 			spinlock_release(&cm_splk);
 		}
 		return 0; //TODO: check with TA if we can return 0 or something else. For 3.3, we will call page swapping code here.
+			  //  I wonder if returning 0 here is what's causing forktest to freak out after a while?
 	}
 	else
 	{
@@ -144,6 +150,7 @@ getppages(unsigned long npages)
 	}
 
 	npages_used+=npages;
+	as_zero_region(addr, npages);
 
 	if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
 	{
@@ -157,12 +164,6 @@ getppages(unsigned long npages)
 	return addr;
 }
 
-/*static
-void
-as_zero_region(paddr_t paddr, unsigned npages)
-{
-	bzero((void *)PADDR_TO_KVADDR(paddr), npages * PAGE_SIZE);
-}*/
 
 void
 coremap_init()
@@ -412,14 +413,14 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	//vaddr_t vbase1, vtop1, vbase2, vtop2, stackbase, stacktop;
 	//vaddr_t stackbase, stacktop;
-	paddr_t paddr; //Used only as a value for getppages to fill.
-	unsigned int i;
-	uint32_t ehi, elo;
-	struct addrspace *as;
-	struct as_region *as_region;
-	int spl;
+	paddr_t paddr = 0; //Used only as a value for getppages to fill.
+	unsigned int i = 0;
+	uint32_t ehi = 0, elo = 0;
+	struct addrspace *as = NULL;
+	struct as_region *as_region = NULL;
+	int spl = 0;
 	bool valid_addr = 0;
-	int err; //Error code for pt_lookup.
+	int err = 0; //Error code for pt_lookup.
 	uint32_t vpn = 0;
 	uint32_t ppn = 0; //Used for page tabe lookup.
 
@@ -462,33 +463,33 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		struct as_region *r = array_get(as->as_regions, i);
 		KASSERT(r->start != 0);
 		KASSERT(r->end != 0);
-		KASSERT(r->size != 0);
+		//KASSERT(r->size != 0); //This KASSERT rejects our heap.
 		KASSERT((r->start & PAGE_FRAME) == r->start);
 		KASSERT((r->end & PAGE_FRAME) == r->end);
 		if(faultaddress >= r->start && faultaddress < r->end)
 		{
 			valid_addr = 1;
-			as_region = array_get(as->as_regions, i);
+			as_region = r; //This copy is used after r is modified.
+			//If faultaddress is close to the bottom of the stack, grow the stack!
+			//Assumption: stack will be the only region past USERSTACK*3/4.
+			/*if ((faultaddress > (USERSTACK * 3 / 4)) && (faultaddress == r->start))
+			{
+				//Make sure the stack won't meet the heap if expanded.
+				//  Heap is always defined right after stack, so we can find it in the array.
+				r = array_get(as->as_regions, i+1);
+				if (r->end >= as_region->start - (6 * PAGE_SIZE))
+				{
+					panic("The stack has no room left to grow!");
+				}
+				//The stack gets six more virtual pages.
+				//Note that we do not allocate physical pages yet.
+				as_region->start -= 6 * PAGE_SIZE;
+				as_region->size += 6;
+				//NOT CERTAIN THAT UPDATING as_region ALSO UPDATES THE REAL REGION!!
+			}*/
 			break;
 		}
 	}
-
-	/*//If faultaddress is close to the bottom of the stack, grow the stack!
-	//I MADE AN INCORRECT ASSUMPTION! The last index in as_regions is the last one created, NOT always the stack!
-	if ((i == array_num(as->as_regions) - 1) && (faultaddress == r->start))
-	{
-		//Make sure the stack won't meet the heap if expanded.
-		if (array_get(as->as_regions, i-1)->end >= r->start - (6 * PAGE_SIZE))
-		{
-			panic("The stack has no room left to grow!");
-		}
-		//The stack gets six more virtual pages.
-		//Note that we do not allocate physical pages yet.
-		r->start -= 6 * PAGE_SIZE;
-		r->size += 6;
-		//NOT CERTAIN THAT UPDATING r ALSO UPDATES THE REAL REGION!!
-	}
-	*/
 
 	//I made the stack a full-fledged as_region, so this isn't needed anymore.
 	/*stackbase = USERSTACK - DUMBVM_STACKPAGES * PAGE_SIZE;
@@ -511,6 +512,10 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	if (err)//If no pte was found, allocate some physical memory.
 	{
 		paddr = getppages(1);
+		/*if (paddr == 0)
+		{
+			return ENOMEM;
+		}*/
 		//ppn = copy_fa - MIPS_KSEG0;
 		ppn = paddr & PAGE_FRAME;
 		struct page_table_entry *pte = pte_create(vpn, ppn, as_region->permission, 1, 1, 0);
@@ -577,10 +582,21 @@ as_create(void)
 	 */
 
 	as->as_regions = array_create();
+	if(as->as_regions == NULL)
+	{
+		kfree(as);
+		return NULL;
+	}
 	array_init(as->as_regions);
 	//as->next_start = 0x00000000; //We were originally going to disallow the passing of vaddr into define_region().
 	//as->stack_start = USERSTACK; //Default 0x7fffffff, I think.
 	as->pt = pt_create(); //This effectively initializes an array.
+	if(as->pt == NULL)
+	{
+		array_destroy(as->as_regions);
+		kfree(as);
+		return NULL;
+	}
 	//May add heap declaration here, as well.
 
 	return as;
@@ -661,7 +677,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		err = as_define_region(newas, r->start, (r->size * PAGE_SIZE), read, write, exec);
 		if (err)
 		{
-			kfree(newas);
+			as_destroy(newas);//kfree(newas);
 			(void)*ret;
 			return err;
 		}
@@ -681,9 +697,21 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	{
 		pte = array_get(old->pt->pt_array, i);
 		newppn = getppages(1);
+		if(newppn == 0)
+		{
+			as_destroy(newas);//kfree(newas);
+			return ENOMEM;
+		}
 		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
+		if(newpte == NULL)
+		{
+			free_ppages(newppn);
+			as_destroy(newas);//kfree(newas);
+			return ENOMEM;
+		}
 		pt_append(newas->pt, newpte);
 		//New: 3rd attempt: Copy the actual contents of memory in the physical pages.
+		//TODO: Maybe put a lock on these? Copying memory while it's being wirtten would break stuff...
 		memmove((void *)PADDR_TO_KVADDR(newpte->ppn),
 			(const void *)PADDR_TO_KVADDR(pte->ppn),
 			PAGE_SIZE);
@@ -720,7 +748,13 @@ as_destroy(struct addrspace *as)
 	while(array_num(as->pt->pt_array))
 	{
 		pte = array_get(as->pt->pt_array, 0);
+		//kfree((void *)pte->ppn);
 		free_ppages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
+		/*int t = tlb_probe(pte->vpn, pte->ppn);
+		if(t > -1)
+		{
+			tlb_write(TLBHI_INVALID(t), TLBLO_INVALID(), t);
+		}*/
 		kfree(pte);
 		array_remove(as->pt->pt_array, 0);
 	}
@@ -732,6 +766,7 @@ as_destroy(struct addrspace *as)
 void
 as_activate(void)
 {
+	//All this does is invalidate a previous proc's TLB entries.
 	int i, spl;
 	struct addrspace *as;
 
@@ -767,6 +802,16 @@ as_deactivate(void)
 	 * anything. See proc.c for an explanation of why it (might)
 	 * be needed.
 	 */
+	//I'll make this clear the TLB just in case.
+	int i, spl;
+	spl = splhigh();
+
+	for (i=0; i<NUM_TLB; i++) {
+		tlb_write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+	}
+
+	splx(spl);
+	
 }
 
 /*
@@ -830,6 +875,10 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t memsize,
 	vaddr -= offset;
 	//Allocate memory just for the attributes of as_region, NOT the memory it will request.
 	newregion = kmalloc(sizeof(struct as_region));
+	if(newregion == NULL)
+	{
+		return ENOMEM;
+	}
 	unsigned int i = 0;
 	unsigned int page_num = 0;
 	vaddr_t page_start = vaddr; //Used for verifying that each requested virtual page doesn't belong to another region.
@@ -937,21 +986,17 @@ int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
 	int err = 0, heaperr = 0;
-	//struct as_region *r = NULL;
+	struct as_region *r = NULL;
 	//KASSERT(as->as_stackpbase != 0);//Need to keep part of as_prepre_load to keep this working...
-	/*
-	 * We will leave this as-is for now, but will probably need to change it later!
-	 *   We want to find out how to track the size of the stack, not just its start.
-	 */
 
-	//We'll make the stack a statically-sized region FOR NOW. Give it read-write permission.
+	//We'll give the stack a statically-sized region AT FIRST. Give it read-write permission.
 	//  Notice that the address passed in is the BOTTOM of the stack!
 	//  The stack can grow by six pages once the botom page (r->start) is reached in vm_fault.
 	err = as_define_region(as, (USERSTACK - (DUMBVM_STACKPAGES * PAGE_SIZE)), (DUMBVM_STACKPAGES * PAGE_SIZE), 1, 1, 0);
 	if (err) { return err; }
-	//r = array_get(as->as_regions, array_num(as->as_regions)-1);
+	r = array_get(as->as_regions, array_num(as->as_regions)-1);
 
-	/*I'm also gonna declare the heap here, since this is also a region every process needs.
+	//I'm also gonna declare the heap here, since this is also a region every process needs.
 	//The heap starts at address USERSTACK/2 with 0 pages allocated for it. (Default: 0x40000000)
 	//The sbrk call will grow it by as many pages as the user requests.
 	heaperr = as_define_region(as, (USERSTACK / 2), 0, 1, 1, 0);
@@ -960,13 +1005,14 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 		kfree(r);
 		return heaperr;
 	}
-	*/
+
 
 	//(void)as;
-	(void)heaperr;
+	//(void)heaperr;
 
 	/* Initial user-level stack pointer */
 	*stackptr = USERSTACK; //Top of the stack.
+	//*heap_break = USERSTACK / 2; //Top of the heap, can be moved with sbrk().
 
 	return 0;
 }

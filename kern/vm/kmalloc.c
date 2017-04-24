@@ -38,7 +38,6 @@
  * Kernel malloc.
  */
 
-
 /*
  * Fill a block with 0xdeadbeef.
  */

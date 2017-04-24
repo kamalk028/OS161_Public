@@ -69,7 +69,7 @@ int ft_read(int fd, void* buff, size_t bufflen, struct file_table* ft, int* retv
 int ft_open(const char *file, int flags, mode_t mode, struct file_table *ft, int *retval);
 int ft_close(int fd, struct file_table *ft, int *retval);
 int ft_copy(int oldfd, int newfd, struct file_table *ft, int *retval);
-struct file_table* ft_copy_all(struct file_table* src, const char *child_name);
+struct file_table* ft_copy_all(struct file_table* src, struct file_table *dest);
 int ft_lseek(int fd, off_t offset, int whence, struct file_table* ft, off_t *retval);
 
 /*File Handle Declaration*/
@@ -106,6 +106,7 @@ struct page_table_entry {
 };
 struct page_table_entry *pte_create(uint32_t vnp, uint32_t ppn, uint8_t pm, bool state, bool valid, bool ref);
 int pt_lookup(struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn);//To pull the first three bits of pm only, & it with 00000111.
+int pt_lookup1 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, unsigned *idx);
 int pt_append(struct page_table *pt, struct page_table_entry *pte);
 
 
@@ -148,7 +149,7 @@ struct proc {
 
 		/* add more material here as needed */
 	/* synch primitives for handling waitpid and exit */
-	struct spinlock exit_values_splk; //Mostly wont be used //Leaving it as of now //Remove it when you are sure
+	//struct spinlock exit_values_splk; //Mostly wont be used //Leaving it as of now //Remove it when you are sure
 	struct lock *parent_cvlock;
 	struct lock *child_cvlock; 
 	struct cv *parent_cv;
@@ -161,6 +162,7 @@ struct proc {
 	 */
 	struct lock *child_pids_lock; //Should acquire lock for adding, removing and reading out of the array.
 	struct array *child_pids;
+	bool exit_signal;
 
 };
 

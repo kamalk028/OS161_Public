@@ -5,6 +5,7 @@
 #include <cdefs.h>
 
 //File syscalls we wrote.
+struct lock* execv_lock;
 int sys_open(const_userptr_t filename, int flags, mode_t mode, int* retval);
 int sys_close(int fd, int *ret);
 int sys_dup2(int oldfd, int newfd, int *ret);
@@ -26,6 +27,7 @@ void print_padded_str(char *buffer, int len);
 int sys_execv(const char *, char **, int *);
 int sys_waitpid(int pid, int *status, int options, int *ret);
 void sys__exit(int exitcode);
+int sys_sbrk(intptr_t amount, int *ret);
 //int sys_execv(const_userptr_t program, const_userptr_t args, int *retval);
 
 //#endif
