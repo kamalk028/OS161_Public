@@ -93,6 +93,7 @@ int fh_lseek(off_t offset, int whence, struct file_handle *fh, off_t *retval);
 /*Page Table Declaration*/
 struct page_table {
 	struct array *pt_array;
+	struct lock *paget_lock;//Need a lock for swapping. pt_lock was already used.
 };
 struct page_table* pt_create(void);
 

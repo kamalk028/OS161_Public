@@ -263,7 +263,7 @@ void
 vm_tlbshootdown(const struct tlbshootdown *ts)
 {
 	(void)ts;
-	panic("dumbvm tried to do tlb shootdown?!\n");
+	//panic("dumbvm tried to do tlb shootdown?!\n");
 }
 
 void free_ppages(paddr_t p_addr)
@@ -759,6 +759,7 @@ as_destroy(struct addrspace *as)
 		array_remove(as->pt->pt_array, 0);
 	}
 	array_destroy(as->pt->pt_array);
+	lock_destroy(as->pt->paget_lock);
 	kfree(as->pt);
 	kfree(as);
 }
@@ -811,7 +812,7 @@ as_deactivate(void)
 	}
 
 	splx(spl);
-	
+
 }
 
 /*

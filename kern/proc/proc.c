@@ -1190,6 +1190,13 @@ struct page_table *pt_create()
 		return NULL;
 	}
 	array_init(pt->pt_array);
+	pt->paget_lock = lock_create("Page Table Lock");
+	if(pt->paget_lock == NULL)
+	{
+		kfree(pt);
+		array_destroy(pt->pt_array);
+		return NULL;
+	}
 	return pt;
 }
 
@@ -1209,6 +1216,7 @@ struct page_table *pt_create()
 	kfree(pt);
 }*/
 
+//Add an entry to the end of a page table. pte_create is usually called before this.
 int pt_append(struct page_table *pt, struct page_table_entry *pte)
 {
 	KASSERT(pt != NULL);
@@ -1224,6 +1232,7 @@ int pt_append(struct page_table *pt, struct page_table_entry *pte)
 */
 struct page_table_entry *pte_create(uint32_t vpn, uint32_t ppn, uint8_t pm, bool state, bool valid, bool ref)
 {
+	//No need to acquire a lock here. All this does is create an object.
 	struct page_table_entry *pte;
 	pte = kmalloc(sizeof(*pte));
 	if(pte == NULL)//KAMAL_CHECK: I have added this if loop, handle NULL case wherever the function is called.
@@ -1240,8 +1249,10 @@ struct page_table_entry *pte_create(uint32_t vpn, uint32_t ppn, uint8_t pm, bool
 	return pte;
 }
 
+//Just like pt_lookup, but it returns the index of the pte.
 int pt_lookup1 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, unsigned *idx)
 {
+	lock_acquire(pt->paget_lock);
 	(void)pm;
 	int num = array_num(pt->pt_array);
 	//bool has_entry = 0;
@@ -1256,19 +1267,24 @@ int pt_lookup1 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, 
 				*ppn = pte->ppn;
 				pte->ref = 1;
 				*idx = i;
+				lock_release(pt->paget_lock);
 				return 0;
-			} 
+			}//3.3: Need to check whether page is on disk or not!!
+			  //BEWARE DEADLOCKS!! If a page needs to be swapped in, and getppages needs to be called, MKAE SURE the lock in getppages isn't held by a proc waiting on pt_lookup!! 
 		}
 		else
 		{
 			pte->ref = 0;//While implementing swapping, CHANGE THIS FUNCTION so that it starts the lookup where the last one left off.
 		}
 	}
+	lock_release(pt->paget_lock);
 	return -1; //This means no page table entry for given vpn.
 }
 
+//Determines if a particular vpn is in a page table. If so, return its ppn or disk block.
 int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn)
 {
+	lock_acquire(pt->paget_lock);
 	(void)pm;
 	int num = array_num(pt->pt_array);
 	//bool has_entry = 0;
@@ -1282,14 +1298,17 @@ int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn)
 			{
 				*ppn = pte->ppn;
 				pte->ref = 1;
+				lock_release(pt->paget_lock);
 				return 0;
-			} 
+			} //3.3: Need to check whether page is on disk or not!!
+			  //BEWARE DEADLOCKS!! If a page needs to be swapped in, and getppages needs to be called, MKAE SURE the lock in getppages isn't held by a proc waiting on pt_lookup!!
 		}
 		else
 		{
-			pte->ref = 0;//While implementing swapping, CHANGE THIS FUNCTION so that it starts the lookup where the last one left off.
+			pte->ref = 0;//3.3 While implementing swapping, CHANGE THIS FUNCTION so that it starts the lookup where the last one left off!
 		}
 	}
+	lock_release(pt->paget_lock);
 	return -1; //This means no page table entry for given vpn.
 }
 

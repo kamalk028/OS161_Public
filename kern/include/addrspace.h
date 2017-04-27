@@ -121,9 +121,9 @@ struct as_region {
 
 //Coremap functions
 struct coremap {
-	uint32_t page_status;
-	uint32_t npages;
-	uint32_t pid;
+	uint32_t page_status;//FREE, FIXED, DIRTY, CLEAN
+	uint32_t npages;//Number of pages used by a particular chunk.
+	uint32_t pid;//pid of owner process. Set to 1 for kernel.
 };
 void		  coremap_init(void);
 
