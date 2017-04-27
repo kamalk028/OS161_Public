@@ -170,6 +170,86 @@ getppages(unsigned long npages)
 	return addr;
 }
 
+static
+paddr_t
+getupages(unsigned long npages)//Same as getppages, but gives dirty state to pages. 
+			       //Called when mem is being allocated for users.
+{
+	//as_prepare_load also calls this function, not just alloc_kpages.
+	paddr_t addr;
+	/*bool is_lock_created = cm_lock != NULL;
+
+	if(is_lock_created)
+	{
+	lock_acquire(cm_lock);
+	}*/
+
+	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
+	{
+		spinlock_acquire(&cm_splk);
+	}
+
+	unsigned long i=kern_pages;
+	unsigned long cont_pages = 0;
+
+	while(i<total_npages && cont_pages < npages)
+	{
+		if(cm_entry[i].page_status == FREE_STATE)
+		{
+			cont_pages++;
+		}
+		else
+		{
+			cont_pages = 0;
+		}
+		i++;
+	}
+	if(i == total_npages)
+	{
+		if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
+		{
+			spinlock_release(&cm_splk);
+		}
+		return 0; //TODO: check with TA if we can return 0 or something else. For 3.3, we will call page swapping code here.
+			  //  I wonder if returning 0 here is what's causing forktest to freak out after a while?
+	}
+	else
+	{
+		i = i - (npages);//Change i to first open index.
+		addr = i * PAGE_SIZE;
+		while(cont_pages > 0)
+		{
+			cm_entry[i].page_status = DIRTY_STATE;
+			cm_entry[i].npages = npages;
+			if(CURCPU_EXISTS())
+			{
+				cm_entry[i].pid = curproc->pid;
+			}
+			else
+			{
+				kern_pages++;
+				cm_entry[i].pid = 1;
+			}
+			i++;
+			cont_pages--;
+		}
+	}
+
+	npages_used+=npages;
+	as_zero_region(addr, npages);
+
+	if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
+	{
+		spinlock_release(&cm_splk);
+	}
+	/*if(is_lock_created)
+	{
+	lock_release(cm_lock);
+	}*/
+
+	return addr;
+}
+
 struct swap_table* st_create()
 {
 	struct swap_table *st = kmalloc(sizeof(struct swap_table));
@@ -268,7 +348,7 @@ coremap_init()
 } 
 
 //We started by copying dumbvm functions to get the kernel to boot.
-//At this point, we've replaced almost everything and shouldn't need to write much more.
+//At this point, we've replaced almost everything.
 
 void
 vm_bootstrap(void)
@@ -323,6 +403,8 @@ alloc_kpages(unsigned npages)
 void
 vm_tlbshootdown(const struct tlbshootdown *ts)
 {
+	//This function needs to remove a TLB entry from another CPU core.
+	//It should only be called if the other process is running and one of its pages will get swapped out.
 	(void)ts;
 	//panic("dumbvm tried to do tlb shootdown?!\n");
 }
@@ -491,7 +573,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
 
 	switch (faulttype) {
-		//For now, we will ignore this. faulttype may not matter?
+		//For now, we will ignore this. 3.3: These might matter now.
 	    case VM_FAULT_READONLY:
 	    case VM_FAULT_READ:
 	    case VM_FAULT_WRITE:
@@ -572,7 +654,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	if (err)//If no pte was found, allocate some physical memory.
 	{
-		paddr = getppages(1);
+		paddr = getupages(1);
 		/*if (paddr == 0)
 		{
 			return ENOMEM;
@@ -605,8 +687,6 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	//kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
 
 	//We will use random entry replacement for now.
-	//vm_tlbshootdown();//If you make a complicated tlb-entry-replacement algo, call this.
-	//Note that there is a struct called tlbshootdown that you must pass into this function.
 	ehi = faultaddress;
 	elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
 	DEBUG(DB_VM, "Not-so-dumb-vm before tlb_random: 0x%x -> 0x%x\n", faultaddress, paddr);
@@ -757,7 +837,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	for (i = 0; i < num_pte; i++)
 	{
 		pte = array_get(old->pt->pt_array, i);
-		newppn = getppages(1);
+		newppn = getupages(1);
 		if(newppn == 0)
 		{
 			as_destroy(newas);//kfree(newas);

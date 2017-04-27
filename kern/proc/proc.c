@@ -1270,11 +1270,12 @@ int pt_lookup1 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, 
 				lock_release(pt->paget_lock);
 				return 0;
 			}//3.3: Need to check whether page is on disk or not!!
-			  //BEWARE DEADLOCKS!! If a page needs to be swapped in, and getppages needs to be called, MKAE SURE the lock in getppages isn't held by a proc waiting on pt_lookup!! 
+			  //BEWARE DEADLOCKS!! If a page needs to be swapped in, and getppages needs to be called, MKAE SURE the lock in getppages isn't held by a proc waiting on pt_lookup!!
 		}
 		else
 		{
 			pte->ref = 0;//While implementing swapping, CHANGE THIS FUNCTION so that it starts the lookup where the last one left off.
+				    // The purpose of setting and zero-ing pte->ref is to help the swapping algorithm.
 		}
 	}
 	lock_release(pt->paget_lock);
