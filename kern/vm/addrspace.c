@@ -133,7 +133,7 @@ getppages(unsigned long npages)
 		addr = i * PAGE_SIZE;
 		while(cont_pages > 0)
 		{
-			cm_entry[i].page_status = FIXED_STATE;
+			cm_entry[i].page_status = DIRTY_STATE;//No swap disk slot would exist for this yet.
 			cm_entry[i].npages = npages;
 			if(CURCPU_EXISTS())
 			{
@@ -142,6 +142,7 @@ getppages(unsigned long npages)
 			else
 			{
 				kern_pages++;
+				cm_entry[i].page_status = FIXED_STATE;//This page should NEVER get swapped out.
 				cm_entry[i].pid = 1;
 			}
 			i++;
@@ -222,7 +223,7 @@ coremap_init()
 } 
 
 //We started by copying dumbvm functions to get the kernel to boot.
-//At this point, we've replaced almost everything and shouldn't need to write much more.
+//At this point, we've replaced almost everything.
 
 void
 vm_bootstrap(void)
@@ -262,6 +263,8 @@ alloc_kpages(unsigned npages)
 void
 vm_tlbshootdown(const struct tlbshootdown *ts)
 {
+	//This function needs to remove a TLB entry from another CPU core.
+	//It should only be called if the other process is running and one of its pages will get swapped out.
 	(void)ts;
 	//panic("dumbvm tried to do tlb shootdown?!\n");
 }
@@ -430,7 +433,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
 
 	switch (faulttype) {
-		//For now, we will ignore this. faulttype may not matter?
+		//For now, we will ignore this. 3.3: These might matter now.
 	    case VM_FAULT_READONLY:
 	    case VM_FAULT_READ:
 	    case VM_FAULT_WRITE:
@@ -544,8 +547,6 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	//kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
 
 	//We will use random entry replacement for now.
-	//vm_tlbshootdown();//If you make a complicated tlb-entry-replacement algo, call this.
-	//Note that there is a struct called tlbshootdown that you must pass into this function.
 	ehi = faultaddress;
 	elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
 	DEBUG(DB_VM, "Not-so-dumb-vm before tlb_random: 0x%x -> 0x%x\n", faultaddress, paddr);
