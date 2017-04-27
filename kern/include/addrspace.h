@@ -123,6 +123,7 @@ struct as_region {
 struct swap_table{
 	struct array *entries;
 	struct lock *swap_table_lk;
+	struct vnode *vnode; 
 };
 
 struct swap_table_entry{

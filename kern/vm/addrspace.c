@@ -41,6 +41,9 @@
 #include <spl.h>
 #include <cpu.h>
 #include <mainbus.h>
+#include <bitmap.h>
+#include <kern/fcntl.h>
+#include <vfs.h>
 
 
 
@@ -56,6 +59,7 @@
  #define FIXED_STATE 1
  #define DIRTY_STATE 2
  #define CLEAN_STATE 3
+ #define DISK_FILE_NAME "lhd0raw:"
 
 
 //Coremap objects.
@@ -66,6 +70,7 @@ static unsigned int npages_used = 0;//Total number of coremap pages used by all 
 static unsigned int total_npages = 0;//Total number of pages in the core map.
 static struct spinlock cm_splk;
 static struct swap_table* st = NULL;
+static bool is_disk_available = false;
 
 static
 void
@@ -185,6 +190,7 @@ struct swap_table* st_create()
 		kfree(st);
 		return NULL;
 	}
+	st->vnode = NULL;
 	return st;
 }
 
@@ -270,8 +276,20 @@ vm_bootstrap(void)
 	// Do nothing. This function is called early in bootup.
 	// If we need anything initilized immediately, it'll go here.
 	// Allocate memory for the swap table here...
-	st = st_create();
-
+	struct vnode *vn = NULL;
+	char *tmp = kstrdup(DISK_FILE_NAME);
+	int err = vfs_open(tmp, O_RDWR, 0664, &vn);
+	if(err)
+	{
+		is_disk_available = false;
+	}
+	else
+	{
+		is_disk_available = true;
+		st = st_create();
+		st->vnode = vn;
+	}
+	kfree(tmp);
 }
 
 unsigned int coremap_used_bytes()
