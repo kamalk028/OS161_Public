@@ -65,6 +65,7 @@ static unsigned int kern_pages = 0;//Total number of physical pages the kernel h
 static unsigned int npages_used = 0;//Total number of coremap pages used by all processes.
 static unsigned int total_npages = 0;//Total number of pages in the core map.
 static struct spinlock cm_splk;
+static struct swap_table* st = NULL;
 
 static
 void
@@ -165,6 +166,45 @@ getppages(unsigned long npages)
 	return addr;
 }
 
+struct swap_table* st_create()
+{
+	struct swap_table *st = kmalloc(sizeof(struct swap_table));
+	if(st == NULL)
+	{
+		return NULL;
+	}
+	st->entries = array_create();
+	if(st->entries == NULL)
+	{
+		kfree(st);
+		return NULL;
+	}
+	st->swap_table_lk = lock_create("swap_table_lock");
+	if(st->swap_table_lk == NULL)
+	{
+		array_destroy(st->entries);
+		kfree(st);
+		return NULL;
+	}
+	return st;
+}
+
+struct swap_table_entry* ste_create()
+{
+	struct swap_table_entry* ste = kmalloc(sizeof(struct swap_table_entry));
+	if(ste == NULL)
+	{
+		return NULL;
+	}
+	return ste;
+}
+
+void ste_destroy(struct swap_table_entry* ste)
+{
+	KASSERT(ste != NULL);
+	kfree(ste);
+}
+
 
 void
 coremap_init()
@@ -230,6 +270,9 @@ vm_bootstrap(void)
 {
 	// Do nothing. This function is called early in bootup.
 	// If we need anything initilized immediately, it'll go here.
+	// Allocate memory for the swap table here...
+	st = st_create();
+
 }
 
 unsigned int coremap_used_bytes()

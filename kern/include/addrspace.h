@@ -119,6 +119,26 @@ struct as_region {
  * functions are found in dumbvm.c.
  */
 
+//Swap table
+struct swap_table{
+	struct array *entries;
+	struct lock *swap_table_lk;
+};
+
+struct swap_table_entry{
+	uint32_t pid;
+	uint32_t vpn;
+	uint32_t disc_idx;
+	void* buff;
+	struct page_table_entry* pte;
+	//Add more stuff as needed
+};
+
+struct swap_table* st_create(void);
+struct swap_table_entry* ste_create(void);
+void ste_destroy(struct swap_table_entry* ste);
+
+
 //Coremap functions
 struct coremap {
 	uint32_t page_status;//FREE, FIXED, DIRTY, CLEAN
