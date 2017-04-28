@@ -44,6 +44,11 @@
 #include <bitmap.h>
 #include <kern/fcntl.h>
 #include <vfs.h>
+#include <uio.h>
+#include <fs.h>
+#include <vnode.h>
+#include <kern/stat.h>
+
 
 
 
@@ -353,8 +358,6 @@ coremap_init()
 void
 vm_bootstrap(void)
 {
-	// Do nothing. This function is called early in bootup.
-	// If we need anything initilized immediately, it'll go here.
 	// Allocate memory for the swap table here...
 	struct vnode *vn = NULL;
 	char *tmp = kstrdup(DISK_FILE_NAME);
@@ -365,9 +368,19 @@ vm_bootstrap(void)
 	}
 	else
 	{
-		is_disk_available = true;
+		struct stat stat;
+		VOP_STAT(vn, &stat);
+		unsigned size = stat.st_size;
+		unsigned npages = (size/PAGE_SIZE) + 1;
+		if(size % PAGE_SIZE == 0)
+		{
+			npages--;
+		}
 		st = st_create();
+		st->bit_map = bitmap_create(npages);
+		is_disk_available = true;
 		st->vnode = vn;
+
 	}
 	kfree(tmp);
 }
@@ -1158,4 +1171,35 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 
 	return 0;
 }
+
+int block_write(vaddr_t vpn, unsigned disk_idx)
+{
+	int err = 0;
+	struct iovec iov;
+	struct uio uio;
+	uio_uinit(&iov, &uio, (void*)vpn, 4096, disk_idx*PAGE_SIZE, UIO_WRITE);
+	err = VOP_WRITE(st->vnode, &uio);
+	if(err)
+	{
+		return err;
+	}
+	return 0;
+}
+
+int block_read(vaddr_t vpn, unsigned disk_idx)
+{
+	int err = 0;
+	struct iovec iov;
+	struct uio uio;
+	uio_uinit(&iov, &uio, (void*)vpn, 4096, disk_idx*PAGE_SIZE, UIO_READ);
+	err = VOP_READ(st->vnode, &uio);
+	if(err)
+	{
+		return err;
+	}
+	return 0;
+}
+
+
+
 
