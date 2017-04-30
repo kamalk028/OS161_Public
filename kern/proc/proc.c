@@ -1193,8 +1193,8 @@ struct page_table *pt_create()
 	pt->paget_lock = lock_create("Page Table Lock");
 	if(pt->paget_lock == NULL)
 	{
-		kfree(pt);
 		array_destroy(pt->pt_array);
+		kfree(pt);
 		return NULL;
 	}
 	return pt;
