@@ -148,12 +148,12 @@ getppages(unsigned long npages)
 			cm_entry[i].npages = npages;
 			if(CURCPU_EXISTS())
 			{
-				cm_entry[i].pid = curproc->pid;
+				cm_entry[i].pid[0] = curproc->pid;
 			}
 			else
 			{
 				kern_pages++;
-				cm_entry[i].pid = 1;
+				cm_entry[i].pid[0] = 1;
 			}
 			i++;
 			cont_pages--;
@@ -216,7 +216,6 @@ getupages(unsigned long npages)//Same as getppages, but gives dirty state to pag
 			spinlock_release(&cm_splk);
 		}
 		return 0; //TODO: check with TA if we can return 0 or something else. For 3.3, we will call page swapping code here.
-			  //  I wonder if returning 0 here is what's causing forktest to freak out after a while?
 	}
 	else
 	{
@@ -228,12 +227,12 @@ getupages(unsigned long npages)//Same as getppages, but gives dirty state to pag
 			cm_entry[i].npages = npages;
 			if(CURCPU_EXISTS())
 			{
-				cm_entry[i].pid = curproc->pid;
+				cm_entry[i].pid[0] = curproc->pid;
 			}
 			else
 			{
 				kern_pages++;
-				cm_entry[i].pid = 1;
+				cm_entry[i].pid[0] = 1;
 			}
 			i++;
 			cont_pages--;
@@ -334,14 +333,14 @@ coremap_init()
 	{
 		cm_entry[i].page_status = FIXED_STATE;
 		cm_entry[i].npages = first_chunk;
-		cm_entry[i].pid = 1;//Special pid value for kernel involved memory.
+		cm_entry[i].pid[0] = 1;//Special pid value for kernel involved memory.
 	}
 
 	for (i = first_chunk; i < num_core_entries; i++)
 	{
 		cm_entry[i].page_status = FREE_STATE;
 		cm_entry[i].npages = 0;
-		cm_entry[i].pid = 0;//Default value; normally assigned curproc->pid once memory is fixed.
+		cm_entry[i].pid[0] = 0;//Default value; normally assigned curproc->pid once memory is fixed.
 	}
 	npages_used = first_chunk;
 	kern_pages = first_chunk;
@@ -433,7 +432,7 @@ void free_ppages(paddr_t p_addr)
 	int temp_chunk = chunk;
 	while(chunk > 0)
 	{
-		KASSERT(cm_entry[i].pid != 1);
+		KASSERT(cm_entry[i].pid[0] != 1);
 		KASSERT(cm_entry[i].page_status != FREE_STATE);
 		cm_entry[i].page_status = FREE_STATE;
 		cm_entry[i].npages = 0;
@@ -441,8 +440,12 @@ void free_ppages(paddr_t p_addr)
 		{
 			//KASSERT(cm_entry[i].pid == curproc->pid);
 		}*/
-		cm_entry[i].pid = 0;
-
+		int element = 0;
+		while (element < 16)
+		{
+			cm_entry[i].pid[element] = 0;
+			element++;
+		}
 		i++;
 		chunk--;
 	}
@@ -586,9 +589,10 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
 
 	switch (faulttype) {
-		//For now, we will ignore this. 3.3: These might matter now.
 	    case VM_FAULT_READONLY:
+		break;
 	    case VM_FAULT_READ:
+		break;
 	    case VM_FAULT_WRITE:
 		break;
 	    default:
@@ -667,7 +671,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	if (err)//If no pte was found, allocate some physical memory.
 	{
-		paddr = getupages(1);
+		paddr = getupages(1);//Pages will be marked as DIRTY in the coremap.
 		/*if (paddr == 0)
 		{
 			return ENOMEM;
@@ -689,7 +693,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 				  //  So, after a context switch, INVALID means AVAILABLE.
 		}
 		ehi = faultaddress;
-		elo = paddr | TLBLO_DIRTY | TLBLO_VALID; //The 22nd and 23rd bits of TLB entries track dirty and valid.
+		elo = paddr | TLBLO_DIRTY | TLBLO_VALID; //The 22nd and 23rd bits of TLB entries track dirty and valid. 3.3: Learn how to use these!
 		DEBUG(DB_VM, "Not-so-dumb-vm before tlb_write: 0x%x -> 0x%x\n", faultaddress, paddr);
 		tlb_write(ehi, elo, i);
 		splx(spl);
@@ -758,8 +762,12 @@ as_create(void)
 
 
 int
-as_copy(struct addrspace *old, struct addrspace **ret)
+as_copy(struct addrspace *old, struct addrspace **ret, uint32_t nextpid)
 {
+	//  We currently find a new physical page for each one the parent had allocated.
+	//  To implement copy-on-write, let the parent and child use the same PA's initially.
+	//  When one of them attempts a write, then allocate a new physical page.
+	//  Mark all pages as READ_ONLY so we can tell when a write is attempted.
 	struct addrspace *newas;
 
 	newas = as_create();
@@ -803,6 +811,8 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 */
 	/*
 	 * Our new code:
+	 * NOTE!! This may need to change drastically for copy-on-write implementation.
+	 * Right now, we allocate a new physical page for every page the source as owned.
 	 */
 
 	struct as_region *r, *newr;
@@ -812,7 +822,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	unsigned int i;
 	bool read = 0, write = 0, exec = 0;
 	paddr_t newppn;
-	int err = 0;
+	int err = 0, entry = 0, page_idx = 0;
 
 	//Start by copying and allocating mem for each region.
 	for (i = 0; i < num_regions; i++)
@@ -827,6 +837,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		if (r->permission >= 4) {read = 1;}
 		if (r->permission >= 6 || r->permission == 2 || r->permission == 3) {write = 1;}
 		if (r->permission % 2 == 1) {exec = 1;}
+
 		//It could be more efficient to define regions manually, if we must.
 		err = as_define_region(newas, r->start, (r->size * PAGE_SIZE), read, write, exec);
 		if (err)
@@ -836,7 +847,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 			return err;
 		}
 		//New: Try to copy the actual contents of memory.
-		newr = array_get(old->as_regions, i);
+		//newr = array_get(old->as_regions, i);
 		//memmove((void *)newr->start, (const void *)r->start, (r->size * PAGE_SIZE));//PROBLEM: memmove may expect either paddr's or kvaddr's > 0x80000000, but we give small vaddr's.
 												//Might actually want to call memmove on the physical pages owned by the oldproc!
 		/*memmove((void *)PADDR_TO_KVADDR(newr->start),
@@ -847,36 +858,67 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 		//kprintf("New end: %x\n", newr->end);
 	}
 	//Now copy all the pte's, except allocte new physical pages for each entry.
+	// 3.3: Change this so that the permission each entry gets is readonly, and new ppages are NOT allocated until a write is attempted (involves TLB).
+	//Immediately acquire the coremap lock, so that swapouts don't occur unexpectedly.
+	spinlock_acquire(&cm_splk);//Mainly needed just to keep pid values correct.
 	for (i = 0; i < num_pte; i++)
 	{
 		pte = array_get(old->pt->pt_array, i);
-		newppn = getupages(1);
-		if(newppn == 0)
+		//newppn = getupages(1);
+		/*if(newppn == 0)
 		{
 			as_destroy(newas);//kfree(newas);
 			return ENOMEM;
-		}
-		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
+		}*/
+		//NEW: Give the newpte the old one's physical page.
+		//  But, take away write permissions from both!
+		if (pte->permission >= 6 || pte->permission == 3 || pte->permission == 2) {pte->permission -= 2;}
+		newpte = pte_create(pte->vpn, pte->ppn, pte->permission, pte->state, pte->valid, pte->ref);
 		if(newpte == NULL)
 		{
-			free_ppages(newppn);
+			//free_ppages(newppn);
 			as_destroy(newas);//kfree(newas);
 			return ENOMEM;
 		}
 		pt_append(newas->pt, newpte);
-		//New: 3rd attempt: Copy the actual contents of memory in the physical pages.
-		//TODO: Maybe put a lock on these? Copying memory while it's being wirtten would break stuff...
-		memmove((void *)PADDR_TO_KVADDR(newpte->ppn),
-			(const void *)PADDR_TO_KVADDR(pte->ppn),
-			PAGE_SIZE);
+		page_idx = pte->ppn / PAGE_SIZE;
+		entry = 0;
+		while(cm_entry[page_idx].pid[entry] != 0 && entry < 16)
+		{
+			entry++;
+		}
+		if (entry != 16)
+		{
+			cm_entry[page_idx].pid[entry] = nextpid;
+		}
+		else
+		{
+			//If 16 proc's are already reading from it, forget it.
+			//The memory can get alloc'd and copied here.
+			newppn = getupages(1);
+			if (newppn == 0)
+			{
+				as_destroy(newas);
+				return ENOMEM;
+			}
+			page_idx = newppn / PAGE_SIZE;
+			cm_entry[page_idx].pid[0] = nextpid;
+			newpte->ppn = newppn;
+			//Copy the actual contents of memory in the physical pages.
+			memmove((void *)PADDR_TO_KVADDR(newpte->ppn),
+				(const void *)PADDR_TO_KVADDR(pte->ppn),
+				PAGE_SIZE);
+		}
 	}
+	spinlock_release(&cm_splk);
+	as_activate();//Flush the parent's TLB entries so that it doesn't write to readonly pages.
 
 	//(void)old;
 	//(void)*ret;
-	/*(void)*pte;
-	(void)*newpte;
-	(void)num_pte;
-	(void)newppn;*/
+	//(void)*pte;
+	//(void)*newpte;
+	//(void)num_pte;
+	(void)newppn;
 	(void)newr;
 	 *ret = newas;
 	return 0;
@@ -890,6 +932,8 @@ as_destroy(struct addrspace *as)
 	dumbvm_can_sleep();
 	struct as_region *r;
 	struct page_table_entry *pte;
+	int entry = 0, page_idx = 0;
+	bool found = 0;
 	//Free all memory regions before freeing the address space.
 	while(array_num(as->as_regions))
 	{
@@ -903,7 +947,22 @@ as_destroy(struct addrspace *as)
 	{
 		pte = array_get(as->pt->pt_array, 0);
 		//kfree((void *)pte->ppn);
-		free_ppages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
+		//3.3: Because of copy-on-write, we now must check if another page is relying on that paddr!!
+		spinlock_acquire(&cm_splk);
+		entry = 0;
+		found = 0;
+		page_idx = pte->ppn / PAGE_SIZE;
+		while(entry < 16)
+		{
+			if(cm_entry[page_idx].pid[entry] == curproc->pid) {cm_entry[page_idx].pid[entry] = 0;}
+			else if(cm_entry[page_idx].pid[entry] != 0) {found = 1;}
+			entry++;
+		}
+		spinlock_release(&cm_splk);
+		if(found == 0)
+		{
+			free_ppages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
+		}
 		/*int t = tlb_probe(pte->vpn, pte->ppn);
 		if(t > -1)
 		{
@@ -1172,6 +1231,44 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 	return 0;
 }
 
+//Swap a page out to disk. Figures out what to swap on its own.
+//int swapout()
+//{
+	//Check the value of is_disk_available. Return ENOMEM if not.
+	//Acquire the coremap lock and the swap table lock.
+	//Using an algorithm, figure out which page should be swapped out.
+	//(ISSUE: SWAPPING ALGO. Would take ages to check every pte
+	//  inside EVERY page table! Maybe rely on coremap instead?
+	//  Also, check for clean pages in the coremap. No data needs to be copied for that.
+	//Will now want to acquire a page table lock. ALWAYS ACQUIRE IN THAT ORDER!!
+	//Call bitmap_alloc to get a spot on the disk (reminder: it is an st object).
+	//Pass that index, and the vpn, into block_write.
+	//Use pt_lookup to see the old physical address.
+	//Possibly update the TLB to remove an entry (or all entries).
+	//ISSUE: Communicating with another CPU's TLB. Idk how.
+	//  Should we just call as_activate or something?
+	//  Can we find a proc's TLB once we've found the proc itself?
+	//Update the pte to indicate the page is on disk, and delete its ppn.
+	//If copy-on-write is implemented, and multiple proc's own a page,
+	//  carefully change the pte for each proc involved!
+	//Release paget_lock.
+	//Update the coremap to free the page. POSSIBLY fill in a new page.
+	//Release the coremap lock (done automatically by getppages).
+	//Update the swap table with the new vpn-diskblock pair.
+	//Release the lock on the swap table.
+	//Done? Idunno, permissions might also need to be considered.
+//}
+
+//Called if a TLB fault occus on a page that's on disk.
+//int swapin()
+//{
+	//First, we might need to call swapout().
+	//Call coremap_used_bytes, and see if it equals
+	//Acquire the locks in the same order: coremap, swap table, page table.
+	//
+//}
+
+//Copy a page of memory to disk. Called by swapout().
 int block_write(vaddr_t vpn, unsigned disk_idx)
 {
 	int err = 0;
@@ -1186,6 +1283,7 @@ int block_write(vaddr_t vpn, unsigned disk_idx)
 	return 0;
 }
 
+//Copy a page of memory back from disk to memory.
 int block_read(vaddr_t vpn, unsigned disk_idx)
 {
 	int err = 0;

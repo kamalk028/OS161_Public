@@ -145,7 +145,8 @@ void ste_destroy(struct swap_table_entry* ste);
 struct coremap {
 	uint32_t page_status;//FREE, FIXED, DIRTY, CLEAN
 	uint32_t npages;//Number of pages used by a particular chunk.
-	uint32_t pid;//pid of owner process. Set to 1 for kernel.
+	uint32_t pid[16];//pid of owner process(es). Set to 1 for kernel.
+			//Multiple processes can read from same page after a fork.
 };
 void		  coremap_init(void);
 
@@ -154,7 +155,7 @@ void		  coremap_init(void);
 
 
 struct addrspace *as_create(void);
-int               as_copy(struct addrspace *src, struct addrspace **ret);
+int               as_copy(struct addrspace *src, struct addrspace **ret, uint32_t nextpid);
 void              as_activate(void);
 void              as_deactivate(void);
 void              as_destroy(struct addrspace *);

@@ -441,7 +441,7 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 	newproc->p_addrspace = NULL;
 
 	//spinlock_acquire(&curproc->p_lock);
-	int t_err = as_copy(curproc->p_addrspace, &newproc->p_addrspace);
+	int t_err = as_copy(curproc->p_addrspace, &newproc->p_addrspace, next_pid);
 	if(t_err)
 	{
 		*err = -1;
@@ -1193,8 +1193,8 @@ struct page_table *pt_create()
 	pt->paget_lock = lock_create("Page Table Lock");
 	if(pt->paget_lock == NULL)
 	{
-		kfree(pt);
 		array_destroy(pt->pt_array);
+		kfree(pt);
 		return NULL;
 	}
 	return pt;
@@ -1219,10 +1219,14 @@ struct page_table *pt_create()
 //Add an entry to the end of a page table. pte_create is usually called before this.
 int pt_append(struct page_table *pt, struct page_table_entry *pte)
 {
+	lock_acquire(pt->paget_lock);
 	KASSERT(pt != NULL);
 	KASSERT(pte != NULL);
 	unsigned int idx = 0;
-	return array_add(pt->pt_array, pte, &idx);
+	int err = 0;
+	err =  array_add(pt->pt_array, pte, &idx);
+	lock_release(pt->paget_lock);
+	return err;
 }
 
 /*
@@ -1271,11 +1275,7 @@ int pt_lookup1 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, 
 				return 0;
 			}//3.3: Need to check whether page is on disk or not!!
 			  //BEWARE DEADLOCKS!! If a page needs to be swapped in, and getppages needs to be called, MKAE SURE the lock in getppages isn't held by a proc waiting on pt_lookup!!
-		}
-		else
-		{
-			pte->ref = 0;//While implementing swapping, CHANGE THIS FUNCTION so that it starts the lookup where the last one left off.
-				    // The purpose of setting and zero-ing pte->ref is to help the swapping algorithm.
+			  //  Or, just make sure that getppages is not called here. And, that getppages acquires this lock after acquiring the coremap lock.
 		}
 	}
 	lock_release(pt->paget_lock);
@@ -1303,10 +1303,6 @@ int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn)
 				return 0;
 			} //3.3: Need to check whether page is on disk or not!!
 			  //BEWARE DEADLOCKS!! If a page needs to be swapped in, and getppages needs to be called, MKAE SURE the lock in getppages isn't held by a proc waiting on pt_lookup!!
-		}
-		else
-		{
-			pte->ref = 0;//3.3 While implementing swapping, CHANGE THIS FUNCTION so that it starts the lookup where the last one left off!
 		}
 	}
 	lock_release(pt->paget_lock);
