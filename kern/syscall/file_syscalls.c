@@ -1054,9 +1054,10 @@ sys_sbrk(intptr_t amount, int *ret)
 		vaddr_t vpn;
 		paddr_t ppn = 0;
 		int not_found = 0;
+		struct page_table_entry* pte = NULL;
 		for (vpn = r->end; vpn < (r->end - kamount); vpn+=PAGE_SIZE)
 		{
-			not_found = pt_lookup1(curproc->p_addrspace->pt, vpn, r->permission, &ppn, &idx);
+			not_found = pt_lookup2(curproc->p_addrspace->pt, vpn, r->permission, &ppn, &idx, &pte);
 			if (not_found)
 			{
 				;
@@ -1065,7 +1066,6 @@ sys_sbrk(intptr_t amount, int *ret)
 			{
 				//Need to update TLB and pte.
 				free_ppages(ppn);
-				struct page_table_entry* pte = array_get(curproc->p_addrspace->pt->pt_array,idx);
 				kfree(pte);
 				array_remove(curproc->p_addrspace->pt->pt_array,idx);
 				int t = tlb_probe(vpn, ppn);

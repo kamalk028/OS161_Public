@@ -92,7 +92,9 @@ struct proc *get_proc(int pid)
 void
 pt_remove(int pid)
 {
+	lock_acquire(pt_lock);
 	pt[pid].proc = NULL;
+	lock_release(pt_lock);
 	//Code can be added here if we implement recycling pid's.
 	return;
 }
@@ -1253,10 +1255,39 @@ struct page_table_entry *pte_create(uint32_t vpn, uint32_t ppn, uint8_t pm, bool
 	return pte;
 }
 
+
+int pt_lookup2 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, unsigned *idx, struct page_table_entry** pt_entry)
+{
+	lock_acquire(pt->paget_lock);
+	(void)pm;
+	int num = array_num(pt->pt_array);
+	//bool has_entry = 0;
+	for (int i = 0; i<num; i++)
+	{
+		struct page_table_entry *pte = array_get(pt->pt_array, i);
+		//KAMAL_CHECK: what if the pte is NULL? 
+		if(vpn == pte->vpn)
+		{
+			if(pte->valid)
+			{
+				*pt_entry = pte;
+				*ppn = pte->ppn;
+				pte->ref = 1;
+				*idx = i;
+				lock_release(pt->paget_lock);
+				return 0;
+			}//3.3: Need to check whether page is on disk or not!!
+			  //BEWARE DEADLOCKS!! If a page needs to be swapped in, and getppages needs to be called, MKAE SURE the lock in getppages isn't held by a proc waiting on pt_lookup!!
+			  //  Or, just make sure that getppages is not called here. And, that getppages acquires this lock after acquiring the coremap lock.
+		}
+	}
+	lock_release(pt->paget_lock);
+	return -1; //This means no page table entry for given vpn.
+}
+
 //Just like pt_lookup, but it returns the index of the pte.
 int pt_lookup1 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, unsigned *idx)
 {
-	lock_acquire(pt->paget_lock);
 	(void)pm;
 	int num = array_num(pt->pt_array);
 	//bool has_entry = 0;
@@ -1271,14 +1302,12 @@ int pt_lookup1 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, 
 				*ppn = pte->ppn;
 				pte->ref = 1;
 				*idx = i;
-				lock_release(pt->paget_lock);
 				return 0;
 			}//3.3: Need to check whether page is on disk or not!!
 			  //BEWARE DEADLOCKS!! If a page needs to be swapped in, and getppages needs to be called, MKAE SURE the lock in getppages isn't held by a proc waiting on pt_lookup!!
 			  //  Or, just make sure that getppages is not called here. And, that getppages acquires this lock after acquiring the coremap lock.
 		}
 	}
-	lock_release(pt->paget_lock);
 	return -1; //This means no page table entry for given vpn.
 }
 
