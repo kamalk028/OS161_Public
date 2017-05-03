@@ -100,6 +100,7 @@ static
 paddr_t
 getppages(unsigned long npages)
 {
+	KASSERT(!spinlock_do_i_hold(&cm_splk));
 	//as_prepare_load also calls this function, not just alloc_kpages.
 	paddr_t addr;
 	/*bool is_lock_created = cm_lock != NULL;
@@ -180,6 +181,7 @@ paddr_t
 getupages(unsigned long npages)//Same as getppages, but gives dirty state to pages. 
 			       //Called when mem is being allocated for users.
 {
+	KASSERT(!spinlock_do_i_hold(&cm_splk));
 	//as_prepare_load also calls this function, not just alloc_kpages.
 	paddr_t addr;
 	/*bool is_lock_created = cm_lock != NULL;
@@ -386,6 +388,7 @@ vm_bootstrap(void)
 
 unsigned int coremap_used_bytes()
 {
+	KASSERT(!spinlock_do_i_hold(&cm_splk));
 	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
 	{
 		spinlock_acquire(&cm_splk);
@@ -423,6 +426,7 @@ vm_tlbshootdown(const struct tlbshootdown *ts)
 
 void free_ppages(paddr_t p_addr)
 {
+	KASSERT(!spinlock_do_i_hold(&cm_splk));
 	unsigned int i = p_addr/PAGE_SIZE;// i is assumed to be the index of the first coremap entry used by the process.
 	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
 	{
@@ -470,6 +474,7 @@ free_kpages(vaddr_t addr)
 int
 vm_fault(int faulttype, vaddr_t faultaddress)
 {
+	KASSERT(!spinlock_do_i_hold(&cm_splk));
 	/*
 	vaddr_t vbase1, vtop1, vbase2, vtop2, stackbase, stacktop;
 	paddr_t paddr;
