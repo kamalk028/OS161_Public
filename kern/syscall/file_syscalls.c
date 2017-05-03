@@ -154,7 +154,7 @@ sys_fork(int *ret)
 	if(err)
 	{
 		*ret = err_code;
-		return -1;
+		return err_code;
 	}
 	//kprintf("Newly forked process: pid value: %d\n",newproc->pid);
 
@@ -165,18 +165,20 @@ sys_fork(int *ret)
 
 	if (result){
 		*ret = result;
-		return -1;
+		return result;
 	}
 
 	if (curproc->pid == parent_pid){
 		*ret = newproc->pid;
 		return 0;
+		//Reminder: the child process returns form enter_forked_process.
 	}
 	else
 	{
 		//kprintf("Control shouldn't reach here:::");
-		*ret = EINVAL;//I just put a random error code here.
-		return -1;
+		// *ret = EINVAL;//I just put a random error code here.
+		//return -1;
+		panic("sys_fork is broken!");
 	}
 }
 
@@ -490,7 +492,7 @@ int sys_execv(const char *program, char **args, int *retval)
 	/* enter_new_process does not return. */
 	panic("enter_new_process returned\n");
 	*retval = EINVAL;
-	return -1;
+	return EINVAL;
 }
 
 int

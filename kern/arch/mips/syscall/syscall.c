@@ -230,7 +230,7 @@ syscall(struct trapframe *tf)
 	KASSERT(curthread->t_iplhigh_count == 0);
 }
 
-
+//Children of processes that called fork are born here.
 void enter_forked_process(void *i_tf, unsigned long idx)
 {
 	KASSERT(i_tf != NULL);

@@ -90,6 +90,16 @@ static
 paddr_t
 getppages(unsigned long npages)
 {
+	int spl = 0;
+	//NOTE: Think about read-write locks for faster implementations...
+	//  Think about using splhigh() and setting volatile values...
+
+	//Much to my surprise, this kassert didn't get triggered.
+	if(CURCPU_EXISTS())
+	{
+		KASSERT(spinlock_do_i_hold(&cm_splk) == 0);
+		spl = splhigh();
+	}
 	//as_prepare_load also calls this function, not just alloc_kpages.
 	paddr_t addr;
 	/*bool is_lock_created = cm_lock != NULL;
@@ -99,7 +109,7 @@ getppages(unsigned long npages)
 	lock_acquire(cm_lock);
 	}*/
 
-	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
+	if(CURCPU_EXISTS()) //&& !spinlock_do_i_hold(&cm_splk))
 	{
 		spinlock_acquire(&cm_splk);
 	}
@@ -121,9 +131,10 @@ getppages(unsigned long npages)
 	}
 	if(i == total_npages)
 	{
-		if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
+		if(CURCPU_EXISTS()) //&& spinlock_do_i_hold(&cm_splk))
 		{
 			spinlock_release(&cm_splk);
+			splx(spl);
 		}
 		return 0; //TODO: check with TA if we can return 0 or something else. For 3.3, we will call page swapping code here.
 			  //  I wonder if returning 0 here is what's causing forktest to freak out after a while?
@@ -153,9 +164,10 @@ getppages(unsigned long npages)
 	npages_used+=npages;
 	as_zero_region(addr, npages);
 
-	if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
+	if(CURCPU_EXISTS())// && spinlock_do_i_hold(&cm_splk))
 	{
 		spinlock_release(&cm_splk);
+		splx(spl);
 	}
 	/*if(is_lock_created)
 	{
@@ -167,9 +179,11 @@ getppages(unsigned long npages)
 
 static
 paddr_t
-getupages(unsigned long npages)//Same as getppages, but gives dirty state to pages. 
+getupages(unsigned long npages)//Same as getppages, but gives dirty state to pages.
 			       //Called when mem is being allocated for users.
 {
+	int spl = 0; //Trying to disable interrupts, not certain it'll help...
+	if(CURCPU_EXISTS()) { KASSERT(spinlock_do_i_hold(&cm_splk) == 0); }
 	//as_prepare_load also calls this function, not just alloc_kpages.
 	paddr_t addr;
 	/*bool is_lock_created = cm_lock != NULL;
@@ -179,9 +193,10 @@ getupages(unsigned long npages)//Same as getppages, but gives dirty state to pag
 	lock_acquire(cm_lock);
 	}*/
 
-	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
+	if(CURCPU_EXISTS())// && !spinlock_do_i_hold(&cm_splk))
 	{
 		spinlock_acquire(&cm_splk);
+		spl = splhigh();
 	}
 
 	unsigned long i=kern_pages;
@@ -201,9 +216,10 @@ getupages(unsigned long npages)//Same as getppages, but gives dirty state to pag
 	}
 	if(i == total_npages)
 	{
-		if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
+		if(CURCPU_EXISTS())// && spinlock_do_i_hold(&cm_splk))
 		{
 			spinlock_release(&cm_splk);
+			splx(spl);
 		}
 		return 0; //TODO: check with TA if we can return 0 or something else. For 3.3, we will call page swapping code here.
 			  //  I wonder if returning 0 here is what's causing forktest to freak out after a while?
@@ -214,6 +230,7 @@ getupages(unsigned long npages)//Same as getppages, but gives dirty state to pag
 		addr = i * PAGE_SIZE;
 		while(cont_pages > 0)
 		{
+			KASSERT(cm_entry[i].page_status == FREE_STATE);
 			cm_entry[i].page_status = DIRTY_STATE;
 			cm_entry[i].npages = npages;
 			if(CURCPU_EXISTS())
@@ -233,9 +250,10 @@ getupages(unsigned long npages)//Same as getppages, but gives dirty state to pag
 	npages_used+=npages;
 	as_zero_region(addr, npages);
 
-	if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
+	if(CURCPU_EXISTS())// && spinlock_do_i_hold(&cm_splk))
 	{
 		spinlock_release(&cm_splk);
+		splx(spl);
 	}
 	/*if(is_lock_created)
 	{
@@ -335,7 +353,8 @@ coremap_init()
 	npages_used = first_chunk;
 	kern_pages = first_chunk;
 
-	//cm_lock = lock_create("coremap_lock"); // Is it safe to call kmalloc here? 
+	//cm_lock = lock_create("coremap_lock"); // It is not safe to call kmalloc here. Memory was already allocated above.
+	//The problem with the standard lock is that we also must allocate a wchan and name for it...
 	spinlock_init(&cm_splk);
 
 	return;
@@ -393,6 +412,8 @@ vm_tlbshootdown(const struct tlbshootdown *ts)
 
 void free_ppages(paddr_t p_addr)
 {
+	if(CURCPU_EXISTS()) { KASSERT(!spinlock_do_i_hold(&cm_splk)); }
+	//dumbvm_can_sleep();//Sometimes, we are in an interrupt handler when we get here.
 	unsigned int i = p_addr/PAGE_SIZE;// i is assumed to be the index of the first coremap entry used by the process.
 	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
 	{
@@ -426,7 +447,8 @@ void
 free_kpages(vaddr_t addr)
 {
 	paddr_t p_addr = addr;
-	if(addr-1 > MIPS_KSEG0)
+	KASSERT(addr-1 > MIPS_KSEG0);
+	if(addr-1 > MIPS_KSEG0)//What if addr = 0x80000000?
 	{
 		p_addr = addr - MIPS_KSEG0;
 	}
@@ -436,6 +458,8 @@ free_kpages(vaddr_t addr)
 int
 vm_fault(int faulttype, vaddr_t faultaddress)
 {
+	//To my surprise, this kassert was not triggerred.
+	KASSERT(spinlock_do_i_hold(&cm_splk) == 0);
 	/*
 	vaddr_t vbase1, vtop1, vbase2, vtop2, stackbase, stacktop;
 	paddr_t paddr;
@@ -631,8 +655,13 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		return EFAULT;
 	}
 
+	//Debugging:
+	//uint32_t curpid = curproc->pid;
+	unsigned int idx = 0;
+	//struct page_table_entry *pte;
+
 	vpn = faultaddress & PAGE_FRAME; //Chops off last twelve bits of faultaddress. (2^32 - 2^12 - 1)
-	err = pt_lookup(as->pt, vpn, as_region->permission, &ppn);
+	err = pt_lookup1(as->pt, vpn, as_region->permission, &ppn, &idx);
 
 	if (err)//If no pte was found, allocate some physical memory.
 	{
@@ -646,9 +675,22 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		struct page_table_entry *pte = pte_create(vpn, ppn, as_region->permission, 1, 1, 0);
 		pt_append(as->pt, pte);
 	}
+	else//If a pte was found, make sure it indeed owns the physical page it says it owns.
+	{
+		//3.3: Also need to consider pages on disk here!
+		//pte = array_get(as->pt->pt_array, idx);
+		spinlock_acquire(&cm_splk);
+		//KASSERT(curproc->p_addrspace == as);//This check might slow the system immensely. USE IT FOR TESTS ONLY.
+		if(curproc->pid != cm_entry[ppn/PAGE_SIZE].pid)
+		{
+			panic("cm_entry pid's are wrong! In map: %u, Curproc: %u", cm_entry[ppn/PAGE_SIZE].pid, curproc->pid);
+		}
+		spinlock_release(&cm_splk);
+	}
 
 	paddr = ppn; //We didn't want to change TLB-related code too much.
 
+	//We still disable interrupts here, too.
 	//Update the tlb. There is a tlb_probe function, I'm not sure why they don't just call that.
 	spl = splhigh();
 	for (i=0; i<NUM_TLB; i++) {
@@ -674,6 +716,9 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	DEBUG(DB_VM, "Not-so-dumb-vm before tlb_random: 0x%x -> 0x%x\n", faultaddress, paddr);
 	tlb_random(ehi, elo); //Overwrites a random TLB entry.
 	splx(spl);
+	//(void)curpid;
+	//(void)pte;
+	(void)idx;
 	return 0;
 }
 
@@ -727,7 +772,7 @@ as_create(void)
 
 
 int
-as_copy(struct addrspace *old, struct addrspace **ret)
+as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 {
 	struct addrspace *newas;
 
@@ -819,13 +864,17 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	for (i = 0; i < num_pte; i++)
 	{
 		pte = array_get(old->pt->pt_array, i);
-		newppn = getupages(1);
+		newppn = getupages(1);//Doing this actually assigns the wrong pid inside getupages...
 		if(newppn == 0)
 		{
 			as_destroy(newas);//kfree(newas);
 			return ENOMEM;
 		}
 		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
+		//Now we re-adjust that pid value in the coremap. TODO: If swapping takes place just before this re-assignment, mass confusion WILL ensue. Rmv locks from getupages.
+		spinlock_acquire(&cm_splk);
+		cm_entry[newppn/PAGE_SIZE].pid = newpid;
+		spinlock_release(&cm_splk);
 		if(newpte == NULL)
 		{
 			free_ppages(newppn);
@@ -992,6 +1041,7 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t memsize,
 	 * Our new code:
 	 */
 
+	dumbvm_can_sleep();
 	//Create a new region called newregion.
 	struct as_region *newregion;
 	//NEW DESIGN DECISION: Make the passed in vaddr page-aligned.
@@ -1053,6 +1103,7 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t memsize,
 	unsigned int idx = 0;
 	array_add(as->as_regions, newregion, &idx);
 	//(void)vaddr;
+	dumbvm_can_sleep();
 	return 0;
 }
 
@@ -1115,7 +1166,6 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 
 	//We'll give the stack a statically-sized region AT FIRST. Give it read-write permission.
 	//  Notice that the address passed in is the BOTTOM of the stack!
-	//  The stack can grow by six pages once the botom page (r->start) is reached in vm_fault.
 	err = as_define_region(as, (USERSTACK - (DUMBVM_STACKPAGES * PAGE_SIZE)), (DUMBVM_STACKPAGES * PAGE_SIZE), 1, 1, 0);
 	if (err) { return err; }
 	r = array_get(as->as_regions, array_num(as->as_regions)-1);
