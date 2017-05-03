@@ -181,7 +181,8 @@ paddr_t
 getupages(unsigned long npages)//Same as getppages, but gives dirty state to pages. 
 			       //Called when mem is being allocated for users.
 {
-	if (CURCPU_EXISTS()) { KASSERT(!spinlock_do_i_hold(&cm_splk)); }
+	//Locks for this function are now acquired on the outside.
+	//if (CURCPU_EXISTS()) { KASSERT(!spinlock_do_i_hold(&cm_splk)); }
 	//as_prepare_load also calls this function, not just alloc_kpages.
 	paddr_t addr;
 	/*bool is_lock_created = cm_lock != NULL;
@@ -191,10 +192,10 @@ getupages(unsigned long npages)//Same as getppages, but gives dirty state to pag
 	lock_acquire(cm_lock);
 	}*/
 
-	if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
+	/*if(CURCPU_EXISTS() && !spinlock_do_i_hold(&cm_splk))
 	{
 		spinlock_acquire(&cm_splk);
-	}
+	}*/
 
 	unsigned long i=kern_pages;
 	unsigned long cont_pages = 0;
@@ -244,11 +245,11 @@ getupages(unsigned long npages)//Same as getppages, but gives dirty state to pag
 	npages_used+=npages;
 	as_zero_region(addr, npages);
 
-	if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
+	/*if(CURCPU_EXISTS() && spinlock_do_i_hold(&cm_splk))
 	{
 		spinlock_release(&cm_splk);
 	}
-	/*if(is_lock_created)
+	if(is_lock_created)
 	{
 	lock_release(cm_lock);
 	}*/
@@ -471,11 +472,12 @@ free_kpages(vaddr_t addr)
 	free_ppages(p_addr);
 }
 
-int
-vm_fault(int faulttype, vaddr_t faultaddress)
-{
-	KASSERT(!spinlock_do_i_hold(&cm_splk));
+/*Old DumbVm's vm_fault*/
+
 	/*
+	int
+	vm_fault(int faulttype, vaddr_t faultaddress)
+	{
 	vaddr_t vbase1, vtop1, vbase2, vtop2, stackbase, stacktop;
 	paddr_t paddr;
 	int i;
@@ -572,13 +574,19 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
 	splx(spl);
 	return EFAULT;
+	}
 	*/
 
-
+int
+vm_fault(int faulttype, vaddr_t faultaddress)
+{
+	//This kassert can get triggered now,
+	//KASSERT(!spinlock_do_i_hold(&cm_splk));
 	//vaddr_t vbase1, vtop1, vbase2, vtop2, stackbase, stacktop;
 	//vaddr_t stackbase, stacktop;
 	paddr_t paddr = 0; //Used only as a value for getppages to fill.
 	unsigned int i = 0;
+	unsigned pte_idx = 0;
 	uint32_t ehi = 0, elo = 0;
 	struct addrspace *as = NULL;
 	struct as_region *as_region = NULL;
@@ -589,7 +597,6 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	uint32_t ppn = 0; //Used for page tabe lookup.
 
 	faultaddress &= PAGE_FRAME; //This effectively chops off 12 bits of faultaddress.
-	//kprintf("FAULTADDR: %x\n", faultaddress); //Don't put kprintf's in vm_fault...
 
 	DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
 
@@ -672,19 +679,92 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	}
 
 	vpn = faultaddress & PAGE_FRAME; //Chops off last twelve bits of faultaddress. (2^32 - 2^12 - 1)
-	err = pt_lookup(as->pt, vpn, as_region->permission, &ppn);
+	//pt_lookup1(curproc->p_addrspace->pt, vpn, r->permission, &ppn, &idx);
+	struct page_table_entry* lookup_pte = NULL;
+	err = pt_lookup2(as->pt, vpn, as_region->permission, &ppn, &pte_idx, &lookup_pte);
+	bool cm_splk_held = spinlock_do_i_hold(&cm_splk);
+	if(!cm_splk_held)
+	{
+		spinlock_acquire(&cm_splk);
+	}
 
 	if (err)//If no pte was found, allocate some physical memory.
 	{
 		paddr = getupages(1);//Pages will be marked as DIRTY in the coremap.
-		/*if (paddr == 0)
+		//if(!cm_splk_held)
+		//{
+			spinlock_release(&cm_splk);
+		//}
+		if (paddr == 0)
 		{
 			return ENOMEM;
-		}*/
+		}
 		//ppn = copy_fa - MIPS_KSEG0;
 		ppn = paddr & PAGE_FRAME;
 		struct page_table_entry *pte = pte_create(vpn, ppn, as_region->permission, 1, 1, 0);
 		pt_append(as->pt, pte);
+	}
+	else //If a pte was found, check its permission, and make sure it really owns its physical page.
+	{
+		//Safety check to confirm that pid values are correct.
+		bool pid_match = false;
+		for (int y = 0; y < 16; y++)
+		{
+			if(curproc->pid == cm_entry[ppn/PAGE_SIZE].pid[y])
+			{
+				pid_match = true;
+				break;
+			}
+		}
+		if (!pid_match) { panic("Pid mismatch! Pid %u not found for cm_entry %d!", curproc->pid, ppn/PAGE_SIZE); }
+
+		bool has_rw_pm = false;
+		if(lookup_pte->permission & 2)
+		{
+			has_rw_pm = true;
+		}
+		if((faulttype == VM_FAULT_READONLY || faulttype == VM_FAULT_WRITE) && !has_rw_pm)
+		{
+			//Get a new page 
+			paddr_t org_paddr = lookup_pte->ppn;
+			paddr_t cpy_paddr = getupages(1);
+			if(cpy_paddr == 0)
+			{
+				//if(!cm_splk_held)
+				//{
+					spinlock_release(&cm_splk);
+				//}
+				return ENOMEM;
+			}
+			//Remove the pid value from the prev cm_entry (find it using the old ppn)
+
+			unsigned cm_idx = cpy_paddr / PAGE_SIZE;
+			for(int x=0; x<16; x++)
+			{
+				if(cm_entry[cm_idx].pid[x] == curproc->pid)
+				{
+					cm_entry[cm_idx].pid[x] = 0;	
+				}
+			}
+
+
+
+			//if(!cm_splk_held)
+			//{
+				spinlock_release(&cm_splk);
+			//}
+
+			//Copy physical memory from this page to the new page
+			//Copy the actual contents of memory in the physical pages.
+            		memmove((void *)PADDR_TO_KVADDR(org_paddr),
+                	    (const void *)PADDR_TO_KVADDR(cpy_paddr),
+                	    PAGE_SIZE);
+			//Change the ppn number in the page_table_entry
+			lookup_pte->ppn = cpy_paddr;
+			ppn = cpy_paddr;
+			//Change the permission for the page_table_entry
+			lookup_pte->permission = lookup_pte->permission | 2;
+		}
 	}
 
 	paddr = ppn; //We didn't want to change TLB-related code too much.
