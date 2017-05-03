@@ -440,18 +440,49 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 	/* VM fields */
 	newproc->p_addrspace = NULL;
 
+	/* Update the process table and assign PID. */
+	lock_acquire(pt_lock);
+	pt[next_pid].proc = newproc;//Firat PID for this function should be 3. 
+	//Other PIDs will depend on next index (held by next_pid).
+	newproc->ppid = curproc->pid;//curproc is the parent proc.
+	newproc->pid = next_pid;
+	newproc->parent_proc = curproc; //Setting reference to parent proc.
+	newproc->has_parent_exited = false;
+	next_pid++;
+	if (next_pid >= MAX_PROC || pt[next_pid].proc != NULL)
+	{
+		next_pid = 2;
+		while(pt[next_pid].proc != NULL && next_pid < MAX_PROC)
+		{
+			next_pid++;
+		}
+		if(next_pid == MAX_PROC)
+		{
+			lock_release(pt_lock);
+			pt[newproc->pid].proc = NULL;
+			*err = -1;
+			*err_code = ENPROC;
+			return NULL;
+		}
+	}
+
+	//Set the addrspace now, while holding the pt_lock, so the pid stays accurate.
 	//spinlock_acquire(&curproc->p_lock);
-	int t_err = as_copy(curproc->p_addrspace, &newproc->p_addrspace, next_pid);
+	int t_err = as_copy(curproc->p_addrspace, &newproc->p_addrspace, newproc->pid);
 	if(t_err)
 	{
+		lock_release(pt_lock);
+		pt[newproc->pid].proc = NULL;
 		*err = -1;
 		*err_code = t_err;
 		return NULL;
 	}
 	//spinlock_release(&curproc->p_lock);
+	lock_release(pt_lock);
 
 	if(newproc->p_addrspace == NULL)
 	{
+		pt[newproc->pid].proc = NULL;
 		*err_code = ENOMEM;
 		*err = -1;
 		return NULL;
@@ -476,32 +507,6 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 	newproc->ft = ft_copy_all(curproc->ft, newproc->ft);
 	newproc->ft->proc = newproc;
 
-	/* Update the process table and assign PID. */
-	lock_acquire(pt_lock);
-	pt[next_pid].proc = newproc;//Firat PID for this function should be 3. 
-	//Other PIDs will depend on next index (held by next_pid).
-	newproc->ppid = curproc->pid;//curproc is the parent proc.
-	newproc->pid = next_pid;
-	newproc->parent_proc = curproc; //Setting reference to parent proc.
-	newproc->has_parent_exited = false;
-	next_pid++;
-	if (next_pid >= MAX_PROC || pt[next_pid].proc != NULL)
-	{
-		next_pid = 2;
-		while(pt[next_pid].proc != NULL && next_pid < MAX_PROC)
-		{
-			next_pid++;
-		}
-		if(next_pid == MAX_PROC)
-		{
-			lock_release(pt_lock);
-			*err = -1;
-			*err_code = ENPROC;
-			return NULL;
-		}
-	}
-	lock_release(pt_lock);
-
 	/*Adding the pid to child_pids array of the parent (curproc)*/
 	unsigned idx = 0;
 	//Acquire lock and proceed
@@ -510,6 +515,7 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 	if(t_err)
 	{
 		lock_release(curproc->child_pids_lock);
+		pt[newproc->pid].proc = NULL;
 		*err = -1;
 		*err_code = t_err;
 		return NULL;
