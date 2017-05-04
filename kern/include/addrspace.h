@@ -174,8 +174,10 @@ int               as_define_stack(struct addrspace *as, vaddr_t *initstackptr);
 /*
 Functions related to swapping
 */
-int block_read(vaddr_t vpn, unsigned disk_idx);
-int block_write(vaddr_t vpn, unsigned disk_idx);
+int swapout(int npages, paddr_t* ppn);
+int remove_pageondisk(vaddr_t vpn);
+int block_read(paddr_t ppn, unsigned disk_idx);
+int block_write(paddr_t ppn, unsigned disk_idx);
 int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid);
 
 /*

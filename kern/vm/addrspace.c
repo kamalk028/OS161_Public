@@ -99,8 +99,13 @@ dumbvm_can_sleep(void)
 
 static
 paddr_t
-getppages(unsigned long npages)
+_getppages(unsigned long npages, bool is_kern)
 {
+	unsigned pg_status = FIXED_STATE;
+	if(!is_kern)
+	{
+		pg_status = DIRTY_STATE;
+	}
 	int spl = 0;
 	//NOTE: Think about read-write locks for faster implementations...
 	//  Think about using splhigh() and setting volatile values...
@@ -113,12 +118,6 @@ getppages(unsigned long npages)
 	}
 	//as_prepare_load also calls this function, not just alloc_kpages.
 	paddr_t addr;
-	/*bool is_lock_created = cm_lock != NULL;
-
-	if(is_lock_created)
-	{
-	lock_acquire(cm_lock);
-	}*/
 
 	if(CURCPU_EXISTS()) //&& !spinlock_do_i_hold(&cm_splk))
 	{
@@ -147,7 +146,7 @@ getppages(unsigned long npages)
 			spinlock_release(&cm_splk);
 			splx(spl);
 		}
-		int err = swapout(npages, &paddr);
+		int err = swapout(npages, &addr);
 		if(err)
 		{
 			return 0;
@@ -159,7 +158,7 @@ getppages(unsigned long npages)
 		addr = i * PAGE_SIZE;
 		while(cont_pages > 0)
 		{
-			cm_entry[i].page_status = FIXED_STATE;
+			cm_entry[i].page_status = pg_status;
 			cm_entry[i].npages = npages;
 			if(CURCPU_EXISTS())
 			{
@@ -173,9 +172,9 @@ getppages(unsigned long npages)
 			i++;
 			cont_pages--;
 		}
+		npages_used+=npages;
 	}
 
-	npages_used+=npages;
 	as_zero_region(addr, npages);
 
 	if(CURCPU_EXISTS())// && spinlock_do_i_hold(&cm_splk))
@@ -183,98 +182,25 @@ getppages(unsigned long npages)
 		spinlock_release(&cm_splk);
 		splx(spl);
 	}
-	/*if(is_lock_created)
-	{
-	lock_release(cm_lock);
-	}*/
 
 	return addr;
 }
 
 static
 paddr_t
-getupages(unsigned long npages)//Same as getppages, but gives dirty state to pages.
-			       //Called when mem is being allocated for users.
+getppages(unsigned long npages)
 {
-	int spl = 0; //Trying to disable interrupts, not certain it'll help...
-	if(CURCPU_EXISTS()) { KASSERT(spinlock_do_i_hold(&cm_splk) == 0); }
-	//as_prepare_load also calls this function, not just alloc_kpages.
-	paddr_t addr;
-	/*bool is_lock_created = cm_lock != NULL;
+	return _getppages(npages, true);
+}
 
-	if(is_lock_created)
-	{
-	lock_acquire(cm_lock);
-	}*/
+//Same as getppages, but gives dirty state to pages.
+//Called when mem is being allocated for users.
+static
+paddr_t
+getupages(unsigned long npages)
+{
 
-	if(CURCPU_EXISTS())// && !spinlock_do_i_hold(&cm_splk))
-	{
-		spinlock_acquire(&cm_splk);
-		spl = splhigh();
-	}
-
-	unsigned long i=kern_pages;
-	unsigned long cont_pages = 0;
-
-	while(i<total_npages && cont_pages < npages)
-	{
-		if(cm_entry[i].page_status == FREE_STATE)
-		{
-			cont_pages++;
-		}
-		else
-		{
-			cont_pages = 0;
-		}
-		i++;
-	}
-	if(i == total_npages)
-	{
-		if(CURCPU_EXISTS())// && spinlock_do_i_hold(&cm_splk))
-		{
-			spinlock_release(&cm_splk);
-			splx(spl);
-		}
-		return 0; //TODO: check with TA if we can return 0 or something else. For 3.3, we will call page swapping code here.
-			  //  I wonder if returning 0 here is what's causing forktest to freak out after a while?
-	}
-	else
-	{
-		i = i - (npages);//Change i to first open index.
-		addr = i * PAGE_SIZE;
-		while(cont_pages > 0)
-		{
-			KASSERT(cm_entry[i].page_status == FREE_STATE);
-			cm_entry[i].page_status = DIRTY_STATE;
-			cm_entry[i].npages = npages;
-			if(CURCPU_EXISTS())
-			{
-				cm_entry[i].pid = curproc->pid;
-			}
-			else
-			{
-				kern_pages++;
-				cm_entry[i].pid = 1;
-			}
-			i++;
-			cont_pages--;
-		}
-	}
-
-	npages_used+=npages;
-	as_zero_region(addr, npages);
-
-	if(CURCPU_EXISTS())// && spinlock_do_i_hold(&cm_splk))
-	{
-		spinlock_release(&cm_splk);
-		splx(spl);
-	}
-	/*if(is_lock_created)
-	{
-	lock_release(cm_lock);
-	}*/
-
-	return addr;
+	return _getppages(npages, false);
 }
 
 struct swap_table* st_create()
@@ -498,108 +424,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 {
 	//To my surprise, this kassert was not triggerred.
 	KASSERT(spinlock_do_i_hold(&cm_splk) == 0);
-	/*
-	vaddr_t vbase1, vtop1, vbase2, vtop2, stackbase, stacktop;
-	paddr_t paddr;
-	int i;
-	uint32_t ehi, elo;
-	struct addrspace *as;
-	int spl;
 
-	faultaddress &= PAGE_FRAME;
-
-	DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
-
-	switch (faulttype) {
-	    case VM_FAULT_READONLY:
-		// We always create pages read-write, so we can't get this.
-		panic("dumbvm: got VM_FAULT_READONLY\n");
-	    case VM_FAULT_READ:
-	    case VM_FAULT_WRITE:
-		break;
-	    default:
-		return EINVAL;
-	}
-
-	if (curproc == NULL) {
-
-		//  No process. This is probably a kernel fault early
-		//  in boot. Return EFAULT so as to panic instead of
-		//  getting into an infinite faulting loop.
-
-		return EFAULT;
-	}
-
-	as = proc_getas();
-	if (as == NULL) {
-
-		 // No address space set up. This is probably also a
-		 // kernel fault early in boot.
-
-		return EFAULT;
-	}
-
-	// Assert that the address space has been set up properly.
-	KASSERT(as->as_vbase1 != 0);
-	KASSERT(as->as_pbase1 != 0);
-	KASSERT(as->as_npages1 != 0);
-	KASSERT(as->as_vbase2 != 0);
-	KASSERT(as->as_pbase2 != 0);
-	KASSERT(as->as_npages2 != 0);
-	KASSERT(as->as_stackpbase != 0);
-	KASSERT((as->as_vbase1 & PAGE_FRAME) == as->as_vbase1);
-	KASSERT((as->as_pbase1 & PAGE_FRAME) == as->as_pbase1);
-	KASSERT((as->as_vbase2 & PAGE_FRAME) == as->as_vbase2);
-	KASSERT((as->as_pbase2 & PAGE_FRAME) == as->as_pbase2);
-	KASSERT((as->as_stackpbase & PAGE_FRAME) == as->as_stackpbase);
-
-	vbase1 = as->as_vbase1;
-	vtop1 = vbase1 + as->as_npages1 * PAGE_SIZE;
-	vbase2 = as->as_vbase2;
-	vtop2 = vbase2 + as->as_npages2 * PAGE_SIZE;
-	stackbase = USERSTACK - DUMBVM_STACKPAGES * PAGE_SIZE;
-	stacktop = USERSTACK;
-
-	if (faultaddress >= vbase1 && faultaddress < vtop1) {
-		paddr = (faultaddress - vbase1) + as->as_pbase1;
-	}
-	else if (faultaddress >= vbase2 && faultaddress < vtop2) {
-		paddr = (faultaddress - vbase2) + as->as_pbase2;
-	}
-	else if (faultaddress >= stackbase && faultaddress < stacktop) {
-		paddr = (faultaddress - stackbase) + as->as_stackpbase;
-	}
-	else {
-		return EFAULT;
-	}
-
-	// make sure it's page-aligned.
-	KASSERT((paddr & PAGE_FRAME) == paddr);
-
-	// Disable interrupts on this CPU while frobbing the TLB.
-	spl = splhigh();
-
-	for (i=0; i<NUM_TLB; i++) {
-		tlb_read(&ehi, &elo, i);
-		if (elo & TLBLO_VALID) {
-			continue;
-		}
-		ehi = faultaddress;
-		elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
-		DEBUG(DB_VM, "dumbvm: 0x%x -> 0x%x\n", faultaddress, paddr);
-		tlb_write(ehi, elo, i);
-		splx(spl);
-		return 0;
-	}
-
-	kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
-	splx(spl);
-	return EFAULT;
-	*/
-
-
-	//vaddr_t vbase1, vtop1, vbase2, vtop2, stackbase, stacktop;
-	//vaddr_t stackbase, stacktop;
 	paddr_t paddr = 0; //Used only as a value for getppages to fill.
 	unsigned int i = 0;
 	uint32_t ehi = 0, elo = 0;
@@ -695,19 +520,24 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	//Debugging:
 	//uint32_t curpid = curproc->pid;
-	unsigned int idx = 0;
-	//struct page_table_entry *pte;
+	struct page_table_entry *dummy = NULL;
+
 
 	vpn = faultaddress & PAGE_FRAME; //Chops off last twelve bits of faultaddress. (2^32 - 2^12 - 1)
-	err = pt_lookup1(as->pt, vpn, as_region->permission, &ppn, &idx);
+	err = pt_lookup(as->pt, vpn, as_region->permission, &ppn, &dummy);
 
-	if (err)//If no pte was found, allocate some physical memory.
+	if(err == 1)
+	{
+		int swp_err = swapin(vpn, &ppn, curproc->pid);
+		if(swp_err)
+		{
+			panic("Swap in failed ");
+			//return ENOMEM;
+		}
+	}
+	else if (err)//If no pte was found, allocate some physical memory.
 	{
 		paddr = getupages(1);
-		/*if (paddr == 0)
-		{
-			return ENOMEM;
-		}*/
 		//ppn = copy_fa - MIPS_KSEG0;
 		ppn = paddr & PAGE_FRAME;
 		struct page_table_entry *pte = pte_create(vpn, ppn, as_region->permission, 1, 1, 0);
@@ -755,9 +585,9 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	DEBUG(DB_VM, "Not-so-dumb-vm before tlb_random: 0x%x -> 0x%x\n", faultaddress, paddr);
 	tlb_random(ehi, elo); //Overwrites a random TLB entry.
 	splx(spl);
+	(void)dummy;
 	//(void)curpid;
 	//(void)pte;
-	(void)idx;
 	return 0;
 }
 
@@ -900,9 +730,20 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		//kprintf("New end: %x\n", newr->end);
 	}
 	//Now copy all the pte's, except allocte new physical pages for each entry.
+	lock_acquire(old->pt->paget_lock);
+	paddr_t temp_ppn = 0;
 	for (i = 0; i < num_pte; i++)
 	{
 		pte = array_get(old->pt->pt_array, i);
+		if(pte->state == 0)
+		{
+			err = swapin(pte->vpn, &temp_ppn, curproc->pid);
+			//the swapped in physical page should have FIXED_STATE to avoid another proc to swap it out.
+			if(err)
+			{
+				panic("In as_copy : swapin returned error:");
+			}
+		}
 		newppn = getupages(1);//Doing this actually assigns the wrong pid inside getupages...
 		if(newppn == 0)
 		{
@@ -927,6 +768,7 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 			(const void *)PADDR_TO_KVADDR(pte->ppn),
 			PAGE_SIZE);
 	}
+	lock_release(old->pt->paget_lock);
 
 	//(void)old;
 	//(void)*ret;
@@ -959,15 +801,16 @@ as_destroy(struct addrspace *as)
 	while(array_num(as->pt->pt_array))
 	{
 		pte = array_get(as->pt->pt_array, 0);
-		//kfree((void *)pte->ppn);
-		free_ppages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
-		/*int t = tlb_probe(pte->vpn, pte->ppn);
-		if(t > -1)
+		if(pte->state)
 		{
-			tlb_write(TLBHI_INVALID(t), TLBLO_INVALID(), t);
-		}*/
-		kfree(pte);
-		array_remove(as->pt->pt_array, 0);
+			free_ppages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
+			kfree(pte);
+			array_remove(as->pt->pt_array, 0);
+		}
+		else
+		{
+			remove_pageondisk(pte->vpn);
+		}
 	}
 	array_destroy(as->pt->pt_array);
 	lock_destroy(as->pt->paget_lock);
@@ -1234,6 +1077,7 @@ static
 paddr_t
 pick_page(unsigned int *pid)
 {
+	spinlock_acquire(&cm_splk);
 	while(1)//If every single page is fixed, infinite loop. Don't think that's possible.
 	{
 		clock++;
@@ -1250,9 +1094,11 @@ pick_page(unsigned int *pid)
 		else
 		{
 			*pid = cm_entry[clock].pid;
+			cm_entry[clock].page_status = FIXED_STATE;
 			return (clock * PAGE_SIZE);
 		}
 	}
+	spinlock_release(&cm_splk);
 }
 
 //Swap a page out to disk. Figures out what to swap on its own.
@@ -1265,9 +1111,55 @@ int swapout(int npages, paddr_t* ppn)
 	}
 
 	
-	paddr_t s_ppn;
 	unsigned s_pid;
-	struct proc* proc s_proc = get_proc(s_pid);
+	    /*
+        * pick_page holds cm_splk throughout the operation.
+        * page_status of the picked_page is set as FIXED_STATE
+        * Remember to change the state back to dirty when you make all the necessary changes
+        */
+
+       *ppn = pick_page(&s_pid);
+       struct proc* s_proc = get_proc(s_pid);
+       struct page_table *pt = s_proc->p_addrspace->pt;
+
+       /* function below changes the returned pte->state to 0
+       */
+       struct page_table_entry *pte = NULL;
+       int err = pt_plookup(pt, *ppn, &pte);
+       as_activate();
+
+       KASSERT(err == 0);
+
+       //Create a swap_entry
+       struct swap_table_entry* ste = ste_create();
+       lock_acquire(st->swap_table_lk);
+       unsigned disc_idx = bitmap_alloc(st->bit_map, &disc_idx);
+       //call block write 
+       err = block_write(*ppn, disc_idx);
+       if(err)
+       {
+               lock_release(st->swap_table_lk);
+               return -1;
+       }
+       ste->pid = curproc->pid;
+       ste->vpn = pte->vpn;
+       ste->disc_idx = disc_idx;
+       ste->pte = pte;
+
+       unsigned dummy = 0;
+
+       array_add(st->entries, ste, &dummy);
+       
+       //On success, assign values to the ste
+       //add the ste to the swap_table
+       lock_release(st->swap_table_lk);
+
+
+       //change the cm_entry page_status to DIRTY_STATE
+       cm_entry[*ppn/PAGE_SIZE].page_status = DIRTY_STATE;
+
+       (void)npages;
+       return 0;
 	
 
 	//Acquire the coremap lock and the swap table lock.
@@ -1292,6 +1184,59 @@ int swapout(int npages, paddr_t* ppn)
 	//Update the swap table with the new vpn-diskblock pair.
 	//Release the lock on the swap table.
 	//Done? Idunno, permissions might also need to be considered.
+}
+
+int remove_pageondisk(vaddr_t vpn)
+{
+	//locate the swap_table_entry using pid and vpn
+	unsigned pid = curproc->pid;
+
+	lock_acquire(st->swap_table_lk);
+	int i = 0, n = array_num(st->entries);
+
+	struct swap_table_entry *ste = NULL;
+	struct page_table_entry *pte = NULL;
+
+	bool temp = false;
+
+	for (i=0; i<n; i++)
+	{
+		ste = array_get(st->entries, i);
+		if (ste->pid == pid && ste->vpn == vpn)
+		{
+			temp = true;
+			//swap_table_entry found
+			unsigned disc_idx = ste->disc_idx;
+			bitmap_unmark(st->bit_map, disc_idx);
+			pte = ste->pte;
+			pte->valid = 0;
+			ste_destroy(ste);
+			array_remove(st->entries, i);
+			break;
+		}
+	}
+
+	lock_release(st->swap_table_lk);
+	if(!temp)
+	{
+		panic("::: We dont have a swap_table_entry for this vpn ::: ");
+	}
+
+	struct addrspace *as = proc_getas();
+	struct page_table *pt = as->pt;
+	lock_acquire(pt->paget_lock);
+	n = array_num(pt->pt_array);
+	for(i = 0; i<n; i++)
+	{
+		if(pte == array_get(pt->pt_array, i))
+		{
+			array_remove(pt->pt_array, i);
+			break;
+		}
+	}
+	lock_release(pt->paget_lock);
+	kfree(pte); //KAMAL: POSSIBLE DEADBEEF ISSUE
+	return 0;
 }
 
 //Called if a TLB fault occus on a page that's on disk.
@@ -1321,7 +1266,6 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 	lock_acquire(st->swap_table_lk);
 	int i = 0, n = array_num(st->entries);
 
-	unsigned int idx = 0;
 	struct swap_table_entry *ste = NULL;
 	struct page_table_entry *pte = NULL;
 
@@ -1346,7 +1290,7 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 			//Update the pte for the proc that owns this page.
 			struct proc *p = NULL;
 			p = get_proc(pid);
-			err = pt_lookup1(p->p_addrspace->pt, vpn, 0, paddr, &idx);
+			err = pt_lookup(p->p_addrspace->pt, vpn, 0, paddr, &pte);
 			if(err == 0 || err == -1)
 			{
 				panic("Page table out of synch while swapping in!");
