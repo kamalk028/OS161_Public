@@ -146,8 +146,11 @@ getppages(unsigned long npages)
 			spinlock_release(&cm_splk);
 			splx(spl);
 		}
-		return 0; //TODO: check with TA if we can return 0 or something else. For 3.3, we will call page swapping code here.
-			  //  I wonder if returning 0 here is what's causing forktest to freak out after a while?
+		int err = swapout(npages, &paddr);
+		if(err)
+		{
+			return 0;
+		}
 	}
 	else
 	{
@@ -353,6 +356,7 @@ coremap_init()
 		cm_entry[i].page_status = FIXED_STATE;
 		cm_entry[i].npages = first_chunk;
 		cm_entry[i].pid = 1;//Special pid value for kernel involved memory.
+		cm_entry[i].ref = false;
 	}
 
 	for (i = first_chunk; i < num_core_entries; i++)
@@ -360,6 +364,7 @@ coremap_init()
 		cm_entry[i].page_status = FREE_STATE;
 		cm_entry[i].npages = 0;
 		cm_entry[i].pid = 0;//Default value; normally assigned curproc->pid once memory is fixed.
+		cm_entry[i].ref = false;
 	}
 	npages_used = first_chunk;
 	kern_pages = first_chunk;
@@ -463,6 +468,7 @@ void free_ppages(paddr_t p_addr)
 			//KASSERT(cm_entry[i].pid == curproc->pid);
 		}*/
 		cm_entry[i].pid = 0;
+		cm_entry[i].ref = false;
 
 		i++;
 		chunk--;
@@ -716,6 +722,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		{
 			panic("cm_entry pid's are wrong! In map: %u, Curproc: %u", cm_entry[ppn/PAGE_SIZE].pid, curproc->pid);
 		}
+		cm_entry[ppn/PAGE_SIZE].ref = true;	
 		spinlock_release(&cm_splk);
 	}
 
@@ -1222,10 +1229,22 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 	return 0;
 }
 
+
 //Swap a page out to disk. Figures out what to swap on its own.
-//int swapout()
-//{
+int swapout(int npages, paddr_t* ppn)
+{
 	//Check the value of is_disk_available. Return ENOMEM if not.
+	if(!is_disk_available)
+	{
+		return ENOMEM;
+	}
+
+	
+	paddr_t s_ppn;
+	unsigned s_pid;
+	struct proc* proc s_proc = get_proc(s_pid);
+	
+
 	//Acquire the coremap lock and the swap table lock.
 	//Using an algorithm, figure out which page should be swapped out.
 	//(ISSUE: SWAPPING ALGO. Would take ages to check every pte
@@ -1248,7 +1267,7 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 	//Update the swap table with the new vpn-diskblock pair.
 	//Release the lock on the swap table.
 	//Done? Idunno, permissions might also need to be considered.
-//}
+}
 
 //Called if a TLB fault occus on a page that's on disk.
 //int swapin()
