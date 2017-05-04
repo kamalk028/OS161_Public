@@ -1316,6 +1316,24 @@ int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn)
 	return -1; //This means no page table entry for given vpn.
 }
 
+int pt_plookup (struct page_table *pt, paddr_t ppn, struct page_table_entry *pte)
+{
+	lock_acquire(pt->paget_lock);
+	int num = array_num(pt->pt_array);
+	for (int i = 0; i < num; i++)
+	{
+		pte = array_get(pt->pt_array, i);
+		if(ppn == pte->ppn && pte->valid)
+		{
+			lock_release(pt->paget_lock);
+			return 0;
+		}
+	}
+	pte = NULL;
+	lock_release(pt->paget_lock);
+	return -1;
+}
+
 /*paddr_t pt_lookup(uint32_t va, uint8_t pm)
 {
 	//Write this!

@@ -108,6 +108,7 @@ struct page_table_entry {
 struct page_table_entry *pte_create(uint32_t vnp, uint32_t ppn, uint8_t pm, bool state, bool valid, bool ref);
 int pt_lookup(struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn);//To pull the first three bits of pm only, & it with 00000111.
 int pt_lookup1 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, unsigned *idx);
+int pt_plookup (struct page_table *pt, paddr_t ppn, struct page_table_entry *pte);
 int pt_append(struct page_table *pt, struct page_table_entry *pte);
 
 

@@ -76,6 +76,7 @@ static unsigned int total_npages = 0;//Total number of pages in the core map.
 static struct spinlock cm_splk;
 static struct swap_table* st = NULL;
 static bool is_disk_available = false;
+static unsigned int clock = 0; //Used in clock-LRU algorithm for selecting a page to swap.
 
 static
 void
@@ -1220,6 +1221,31 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 	//*heap_break = USERSTACK / 2; //Top of the heap, can be moved with sbrk().
 
 	return 0;
+}
+
+static
+paddr_t
+pick_page(unsigned int *pid)
+{
+	while(1)//If every single page is fixed, infinite loop. Don't think that's possible.
+	{
+		clock++;
+		if (clock == total_npages) { clock = 0; }
+
+		if(cm_entry[clock].page_status == FIXED_STATE)
+		{
+			continue;
+		}
+		if(cm_entry[clock].ref == 1)
+		{
+			cm_entry[clock].ref = 0;
+		}
+		else
+		{
+			*pid = cm_entry[clock].pid;
+			return (clock * PAGE_SIZE);
+		}
+	}
 }
 
 //Swap a page out to disk. Figures out what to swap on its own.
