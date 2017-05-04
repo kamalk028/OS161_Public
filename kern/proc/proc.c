@@ -1267,11 +1267,19 @@ int pt_lookup1 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, 
 		{
 			if(pte->valid)
 			{
-				*ppn = pte->ppn;
-				pte->ref = 1;
 				*idx = i;
-				lock_release(pt->paget_lock);
-				return 0;
+				pte->ref = 1;
+				if(pte->state)
+				{
+					lock_release(pt->paget_lock);
+					*ppn = pte->ppn;
+					return 0;
+				}
+				else
+				{
+					lock_release(pt->paget_lock);
+					return 1;
+				}
 			}//3.3: Need to check whether page is on disk or not!!
 			  //BEWARE DEADLOCKS!! If a page needs to be swapped in, and getppages needs to be called, MKAE SURE the lock in getppages isn't held by a proc waiting on pt_lookup!!
 		}
@@ -1316,8 +1324,12 @@ int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn)
 	return -1; //This means no page table entry for given vpn.
 }
 
+
 int pt_plookup (struct page_table *pt, paddr_t ppn, struct page_table_entry *pte)
 {
+	/*
+ 	 * Only use of the function below, is inside swapout, it sets the state of the pte as 0
+ 	*/
 	lock_acquire(pt->paget_lock);
 	int num = array_num(pt->pt_array);
 	for (int i = 0; i < num; i++)
@@ -1325,6 +1337,8 @@ int pt_plookup (struct page_table *pt, paddr_t ppn, struct page_table_entry *pte
 		pte = array_get(pt->pt_array, i);
 		if(ppn == pte->ppn && pte->valid)
 		{
+			KASSERT(pte->state == 1);
+			pte->state = 0;
 			lock_release(pt->paget_lock);
 			return 0;
 		}

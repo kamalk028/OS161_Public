@@ -174,8 +174,8 @@ int               as_define_stack(struct addrspace *as, vaddr_t *initstackptr);
 /*
 Functions related to swapping
 */
-int block_read(vaddr_t vpn, unsigned disk_idx);
-int block_write(vaddr_t vpn, unsigned disk_idx);
+int block_read(paddr_t vpn, unsigned disk_idx);
+int block_write(pddr_t vpn, unsigned disk_idx);
 
 /*
  * Functions in loadelf.c

@@ -99,6 +99,112 @@ dumbvm_can_sleep(void)
 
 static
 paddr_t
+getppages(unsigned long npages, bool isKern)
+{
+	unsigned pg_status = FIXED_STATE;
+	if(!isKern)
+	{
+		pg_status = DIRTY_STATE;
+	}
+	int spl = 0;
+	//NOTE: Think about read-write locks for faster implementations...
+	//  Think about using splhigh() and setting volatile values...
+
+	//Much to my surprise, this kassert didn't get triggered.
+	if(CURCPU_EXISTS())
+	{
+		KASSERT(spinlock_do_i_hold(&cm_splk) == 0);
+		spl = splhigh();
+	}
+	//as_prepare_load also calls this function, not just alloc_kpages.
+	paddr_t addr;
+	/*bool is_lock_created = cm_lock != NULL;
+
+	if(is_lock_created)
+	{
+	lock_acquire(cm_lock);
+	}*/
+
+	if(CURCPU_EXISTS()) //&& !spinlock_do_i_hold(&cm_splk))
+	{
+		spinlock_acquire(&cm_splk);
+	}
+
+	unsigned long i=kern_pages;
+	unsigned long cont_pages = 0;
+
+	while(i<total_npages && cont_pages < npages)
+	{
+		if(cm_entry[i].page_status == FREE_STATE)
+		{
+			cont_pages++;
+		}
+		else
+		{
+			cont_pages = 0;
+		}
+		i++;
+	}
+	if(i == total_npages)
+	{
+		if(CURCPU_EXISTS()) //&& spinlock_do_i_hold(&cm_splk))
+		{
+			spinlock_release(&cm_splk);
+			splx(spl);
+		}
+		int err = swapout(npages, &paddr);
+		if(err)
+		{
+			return 0;
+		}
+	}
+	else
+	{
+		i = i - (npages);//Change i to first open index.
+		addr = i * PAGE_SIZE;
+		while(cont_pages > 0)
+		{
+			cm_entry[i].page_status = pg_status;
+			cm_entry[i].npages = npages;
+			if(CURCPU_EXISTS())
+			{
+				cm_entry[i].pid = curproc->pid;
+			}
+			else
+			{
+				kern_pages++;
+				cm_entry[i].pid = 1;
+			}
+			i++;
+			cont_pages--;
+		}
+	}
+
+	npages_used+=npages;
+	as_zero_region(addr, npages);
+
+	if(CURCPU_EXISTS())// && spinlock_do_i_hold(&cm_splk))
+	{
+		spinlock_release(&cm_splk);
+		splx(spl);
+	}
+	/*if(is_lock_created)
+	{
+	lock_release(cm_lock);
+	}*/
+
+	return addr;
+}
+
+static 
+paddr_t
+getppages(unsigned long npages)
+{
+	getppages(npages, true);
+}
+
+static
+paddr_t
 getppages(unsigned long npages)
 {
 	int spl = 0;
@@ -498,108 +604,6 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 {
 	//To my surprise, this kassert was not triggerred.
 	KASSERT(spinlock_do_i_hold(&cm_splk) == 0);
-	/*
-	vaddr_t vbase1, vtop1, vbase2, vtop2, stackbase, stacktop;
-	paddr_t paddr;
-	int i;
-	uint32_t ehi, elo;
-	struct addrspace *as;
-	int spl;
-
-	faultaddress &= PAGE_FRAME;
-
-	DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
-
-	switch (faulttype) {
-	    case VM_FAULT_READONLY:
-		// We always create pages read-write, so we can't get this.
-		panic("dumbvm: got VM_FAULT_READONLY\n");
-	    case VM_FAULT_READ:
-	    case VM_FAULT_WRITE:
-		break;
-	    default:
-		return EINVAL;
-	}
-
-	if (curproc == NULL) {
-
-		//  No process. This is probably a kernel fault early
-		//  in boot. Return EFAULT so as to panic instead of
-		//  getting into an infinite faulting loop.
-
-		return EFAULT;
-	}
-
-	as = proc_getas();
-	if (as == NULL) {
-
-		 // No address space set up. This is probably also a
-		 // kernel fault early in boot.
-
-		return EFAULT;
-	}
-
-	// Assert that the address space has been set up properly.
-	KASSERT(as->as_vbase1 != 0);
-	KASSERT(as->as_pbase1 != 0);
-	KASSERT(as->as_npages1 != 0);
-	KASSERT(as->as_vbase2 != 0);
-	KASSERT(as->as_pbase2 != 0);
-	KASSERT(as->as_npages2 != 0);
-	KASSERT(as->as_stackpbase != 0);
-	KASSERT((as->as_vbase1 & PAGE_FRAME) == as->as_vbase1);
-	KASSERT((as->as_pbase1 & PAGE_FRAME) == as->as_pbase1);
-	KASSERT((as->as_vbase2 & PAGE_FRAME) == as->as_vbase2);
-	KASSERT((as->as_pbase2 & PAGE_FRAME) == as->as_pbase2);
-	KASSERT((as->as_stackpbase & PAGE_FRAME) == as->as_stackpbase);
-
-	vbase1 = as->as_vbase1;
-	vtop1 = vbase1 + as->as_npages1 * PAGE_SIZE;
-	vbase2 = as->as_vbase2;
-	vtop2 = vbase2 + as->as_npages2 * PAGE_SIZE;
-	stackbase = USERSTACK - DUMBVM_STACKPAGES * PAGE_SIZE;
-	stacktop = USERSTACK;
-
-	if (faultaddress >= vbase1 && faultaddress < vtop1) {
-		paddr = (faultaddress - vbase1) + as->as_pbase1;
-	}
-	else if (faultaddress >= vbase2 && faultaddress < vtop2) {
-		paddr = (faultaddress - vbase2) + as->as_pbase2;
-	}
-	else if (faultaddress >= stackbase && faultaddress < stacktop) {
-		paddr = (faultaddress - stackbase) + as->as_stackpbase;
-	}
-	else {
-		return EFAULT;
-	}
-
-	// make sure it's page-aligned.
-	KASSERT((paddr & PAGE_FRAME) == paddr);
-
-	// Disable interrupts on this CPU while frobbing the TLB.
-	spl = splhigh();
-
-	for (i=0; i<NUM_TLB; i++) {
-		tlb_read(&ehi, &elo, i);
-		if (elo & TLBLO_VALID) {
-			continue;
-		}
-		ehi = faultaddress;
-		elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
-		DEBUG(DB_VM, "dumbvm: 0x%x -> 0x%x\n", faultaddress, paddr);
-		tlb_write(ehi, elo, i);
-		splx(spl);
-		return 0;
-	}
-
-	kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
-	splx(spl);
-	return EFAULT;
-	*/
-
-
-	//vaddr_t vbase1, vtop1, vbase2, vtop2, stackbase, stacktop;
-	//vaddr_t stackbase, stacktop;
 	paddr_t paddr = 0; //Used only as a value for getppages to fill.
 	unsigned int i = 0;
 	uint32_t ehi = 0, elo = 0;
@@ -700,8 +704,12 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	vpn = faultaddress & PAGE_FRAME; //Chops off last twelve bits of faultaddress. (2^32 - 2^12 - 1)
 	err = pt_lookup1(as->pt, vpn, as_region->permission, &ppn, &idx);
-
-	if (err)//If no pte was found, allocate some physical memory.
+	if(err == 1)
+	{
+		//swap in here for the new page
+		int swp_err = swapin(vpn, &ppn, curproc->pid); 
+	}
+	else if (err)//If no pte was found, allocate some physical memory.
 	{
 		paddr = getupages(1);
 		/*if (paddr == 0)
@@ -1234,6 +1242,7 @@ static
 paddr_t
 pick_page(unsigned int *pid)
 {
+	spinlock_acquire(&cm_splk);
 	while(1)//If every single page is fixed, infinite loop. Don't think that's possible.
 	{
 		clock++;
@@ -1250,24 +1259,69 @@ pick_page(unsigned int *pid)
 		else
 		{
 			*pid = cm_entry[clock].pid;
+			cm_entry[clock].page_status = FIXED_STATE;
+			spinlock_release(&cm_splk);
 			return (clock * PAGE_SIZE);
 		}
 	}
+	spinlock_release(&cm_splk);
 }
 
 //Swap a page out to disk. Figures out what to swap on its own.
-int swapout(int npages, paddr_t* ppn)
+int swapout(int npages, paddr_t* ppn, vaddr_t vpn)
 {
 	//Check the value of is_disk_available. Return ENOMEM if not.
 	if(!is_disk_available)
 	{
 		return ENOMEM;
 	}
-
-	
 	paddr_t s_ppn;
 	unsigned s_pid;
+
+	/*
+	 * pick_page holds cm_splk throughout the operation.
+	 * page_status of the picked_page is set as FIXED_STATE
+	 * Remember to change the state back to dirty when you make all the necessary changes
+	 */
+
+	s_ppn = pick_page(&s_pid);
 	struct proc* proc s_proc = get_proc(s_pid);
+	struct page_table *pt = s_proc->p_addrspace->pt;
+
+	/* function below changes the returned pte->state to 0
+	*/
+	int err = pt_plookup(pt, ppn, &pte);
+	as_activate();
+
+	KASSERT(err == 0);
+
+	//Create a swap_entry
+	struct swap_table_entry* ste = ste_create();
+	lock_acquire(st->swap_table_lk);
+	unsigned disc_idx = bitmap_alloc(st->bit_map);
+	//call block write 
+	int err = block_write(ppn, disk_idx);
+	if(err)
+	{
+		lock_release(st->swap_table_lk);
+		return -1;
+	}
+	ste->pid = curproc->pid;
+	ste->vpn = vpn;
+	ste->disc_idx = disc_idx;
+	ste->pte = pte;
+
+	array_add(st->entries, ste);
+	
+	//On success, assign values to the ste
+	//add the ste to the swap_table
+	lock_release(st->swap_table_lk);
+
+
+	//change the cm_entry page_status to DIRTY_STATE
+	cm_entry[ppn/PAGE_SIZE].page_status = DIRTY_STATE;
+
+	
 	
 
 	//Acquire the coremap lock and the swap table lock.
@@ -1304,7 +1358,7 @@ int swapout(int npages, paddr_t* ppn)
 //}
 
 //Copy a page of memory to disk. Called by swapout().
-int block_write(vaddr_t vpn, unsigned disk_idx)
+int block_write(paddr_t vpn, unsigned disk_idx)
 {
 	int err = 0;
 	struct iovec iov;
@@ -1319,7 +1373,7 @@ int block_write(vaddr_t vpn, unsigned disk_idx)
 }
 
 //Copy a page of memory back from disk to memory.
-int block_read(vaddr_t vpn, unsigned disk_idx)
+int block_read(paddr_t vpn, unsigned disk_idx)
 {
 	int err = 0;
 	struct iovec iov;

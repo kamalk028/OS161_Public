@@ -1059,13 +1059,21 @@ sys_sbrk(intptr_t amount, int *ret)
 		for (vpn = r->end; vpn < (r->end - kamount); vpn+=PAGE_SIZE)
 		{
 			not_found = pt_lookup1(curproc->p_addrspace->pt, vpn, r->permission, &ppn, &idx);
-			if (not_found)
+			//Handle swap in here: 
+			if (not_found == 1) 
+			{
+				//You have to get rid of the disc_idx
+				//get rid of the swap_table_entry
+				//Delete the  
+			}
+			else if(not_found)
 			{
 				;
 			}
 			else
 			{
 				//Need to update TLB and pte.
+				//KAMAL:ACQUIRE PAGE_TABLE LOCK
 				free_ppages(ppn);
 				struct page_table_entry* pte = array_get(curproc->p_addrspace->pt->pt_array,idx);
 				kfree(pte);
