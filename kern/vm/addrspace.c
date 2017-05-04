@@ -1300,6 +1300,7 @@ int swapout(int npages, paddr_t* ppn)
 //Called if a TLB fault occus on a page that's on disk.
 int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 {
+	int err = 0;
 	//First, we might need to call swapout().
 	if (total_npages == npages_used)
 	{
@@ -1319,8 +1320,11 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 	//  Just make certain that swapin and swapout acquire in same order.)
 	//lock_acquire(swap_table_lk);
 	//Use the swap table to find the data we need.
-	int i = 0, n = array_num(st->entries), err = 0, idx = 0;
+	int i = 0, n = array_num(st->entries);
+	unsigned int idx = 0;
 	struct swap_table_entry *ste = NULL;
+	struct page_table_entry *pte = NULL;
+	err = 0;
 	for (i=0; i<n; i++)
 	{
 		ste = array_get(st->entries, i);
@@ -1328,7 +1332,7 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 		{
 			//Call block read to retrieve the data from disk.
 			//lock_release(swap_table_lk);
-			err = block_read(*paddr, ste->disk_idx);
+			err = block_read(*paddr, ste->disc_idx);
 			if (err)
 			{
 				panic("block_read failed in swapin for some reason.");
@@ -1347,15 +1351,16 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 			pte->ppn = *paddr;
 			pte->state = 1; //Mark it as being in memory.
 			lock_release(p->p_addrspace->pt->paget_lock);
-			
+
 			//Mark the coremap page as owned by this proc and CLEAN_STATE.
 			spinlock_acquire(&cm_splk);
-			cm_entry[*paddr/PAGE_SIZE].page_state = CLEAN_STATE;
+			cm_entry[*paddr/PAGE_SIZE].page_status = CLEAN_STATE;
 			cm_entry[*paddr/PAGE_SIZE].ref = 1;
 			spinlock_release(&cm_splk);
 			break;
 		}
 	}
+	return 0;
 }
 
 //Copy a page of memory to disk. Called by swapout().
