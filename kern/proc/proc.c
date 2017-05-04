@@ -1096,7 +1096,7 @@ int fh_read(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 	KASSERT(fh != NULL);
 	int err;
 	err = 0;
-	struct iovec iov;//DO THESE NEED TO BE FREED?
+	struct iovec iov;
 	struct uio uio;
 	if(!(fh->flags == O_RDONLY || fh->flags & O_RDWR))
 	{
@@ -1107,7 +1107,7 @@ int fh_read(void* buff, size_t bufflen, struct file_handle* fh, int* retval)
 		return err;
 	}
 	lock_acquire(fh->fh_lock);//spinlock_acquire(&fh->fh_splk);//spinlock_acquire(&fh->fh_splk);
-	uio_uinit(&iov, &uio, buff, bufflen, fh->offset, UIO_READ);//DOES THIS CALL KMALLOC?
+	uio_uinit(&iov, &uio, buff, bufflen, fh->offset, UIO_READ);
 	err = VOP_READ(fh->vnode, &uio);
 	if(err)
 	{

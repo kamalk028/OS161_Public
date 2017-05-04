@@ -960,7 +960,8 @@ as_destroy(struct addrspace *as)
 	{
 		pte = array_get(as->pt->pt_array, 0);
 		//kfree((void *)pte->ppn);
-		free_ppages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
+		free_ppages(pte->ppn);//TODO:ASST3.3: Will want to check if the page is on disk or not!
+		//TODO:If a page is on disk, how do we remove data from the disk? Write a million zero's?
 		/*int t = tlb_probe(pte->vpn, pte->ppn);
 		if(t > -1)
 		{
@@ -1283,6 +1284,8 @@ int swapout(int npages, paddr_t* ppn)
 	//ISSUE: Communicating with another CPU's TLB. Idk how.
 	//  Should we just call as_activate or something?
 	//  Can we find a proc's TLB once we've found the proc itself?
+	//WARNING: When swapping out, don't create a new disk slot for
+	//  a page that already had one. Overwrite that old slot.
 	//Update the pte to indicate the page is on disk, and delete its ppn.
 	//If copy-on-write is implemented, and multiple proc's own a page,
 	//  carefully change the pte for each proc involved!
@@ -1295,21 +1298,73 @@ int swapout(int npages, paddr_t* ppn)
 }
 
 //Called if a TLB fault occus on a page that's on disk.
-//int swapin()
-//{
+int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
+{
 	//First, we might need to call swapout().
-	//Call coremap_used_bytes, and see if it equals
+	if (total_npages == npages_used)
+	{
+		err = swapout(1, paddr);
+		if (err)
+		{
+			//Maybe we should just return ENOMEM?
+			panic("SNAFU: swapout returned an error when swapin called it!!");
+		}
+	}
+	else
+	{
+		*paddr = getppages(1);//Page temporarily labelled as FIXED.
+	}
 	//Acquire the locks in the same order: coremap, swap table, page table.
-	//
-//}
+	//  (Tentatively, we can switch theorder of coremap and swap table.
+	//  Just make certain that swapin and swapout acquire in same order.)
+	//lock_acquire(swap_table_lk);
+	//Use the swap table to find the data we need.
+	int i = 0, n = array_num(st->entries), err = 0, idx = 0;
+	struct swap_table_entry *ste = NULL;
+	for (i=0; i<n; i++)
+	{
+		ste = array_get(st->entries, i);
+		if (ste->pid == pid && ste->vpn == vpn)
+		{
+			//Call block read to retrieve the data from disk.
+			//lock_release(swap_table_lk);
+			err = block_read(*paddr, ste->disk_idx);
+			if (err)
+			{
+				panic("block_read failed in swapin for some reason.");
+			}
+			//Assumption: calling block_read with the ppn fills that physical page.
+
+			//Update the pte for the proc that owns this page.
+			struct proc *p = NULL;
+			p = get_proc(pid);
+			err = pt_lookup1(p->p_addrspace->pt, vpn, 0, paddr, &idx);
+			if(err == 0 || err == -1)
+			{
+				panic("Page table out of synch while swapping in!");
+			}
+			lock_acquire(p->p_addrspace->pt->paget_lock);
+			pte->ppn = *paddr;
+			pte->state = 1; //Mark it as being in memory.
+			lock_release(p->p_addrspace->pt->paget_lock);
+			
+			//Mark the coremap page as owned by this proc and CLEAN_STATE.
+			spinlock_acquire(&cm_splk);
+			cm_entry[*paddr/PAGE_SIZE].page_state = CLEAN_STATE;
+			cm_entry[*paddr/PAGE_SIZE].ref = 1;
+			spinlock_release(&cm_splk);
+			break;
+		}
+	}
+}
 
 //Copy a page of memory to disk. Called by swapout().
-int block_write(vaddr_t vpn, unsigned disk_idx)
+int block_write(paddr_t ppn, unsigned disk_idx)
 {
 	int err = 0;
 	struct iovec iov;
 	struct uio uio;
-	uio_uinit(&iov, &uio, (void*)vpn, 4096, disk_idx*PAGE_SIZE, UIO_WRITE);
+	uio_uinit(&iov, &uio, (void*)ppn, 4096, disk_idx*PAGE_SIZE, UIO_WRITE);
 	err = VOP_WRITE(st->vnode, &uio);
 	if(err)
 	{
@@ -1319,12 +1374,12 @@ int block_write(vaddr_t vpn, unsigned disk_idx)
 }
 
 //Copy a page of memory back from disk to memory.
-int block_read(vaddr_t vpn, unsigned disk_idx)
+int block_read(paddr_t ppn, unsigned disk_idx)
 {
 	int err = 0;
 	struct iovec iov;
 	struct uio uio;
-	uio_uinit(&iov, &uio, (void*)vpn, 4096, disk_idx*PAGE_SIZE, UIO_READ);
+	uio_uinit(&iov, &uio, (void*)ppn, 4096, disk_idx*PAGE_SIZE, UIO_READ);
 	err = VOP_READ(st->vnode, &uio);
 	if(err)
 	{
