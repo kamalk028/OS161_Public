@@ -1278,6 +1278,7 @@ int swapout(int npages, paddr_t* ppn)
 	//  Also, check for clean pages in the coremap. No data needs to be copied for that.
 	//Will now want to acquire a page table lock. ALWAYS ACQUIRE IN THAT ORDER!!
 	//Call bitmap_alloc to get a spot on the disk (reminder: it is an st object).
+	//NOTE: Only need to call bitmap_alloc if the page has never been on disk.
 	//Pass that index, and the vpn, into block_write.
 	//Use pt_lookup to see the old physical address.
 	//Possibly update the TLB to remove an entry (or all entries).
@@ -1315,15 +1316,19 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 	{
 		*paddr = getppages(1);//Page temporarily labelled as FIXED.
 	}
+
 	//Acquire the locks in the same order: coremap, swap table, page table.
 	//  (Tentatively, we can switch theorder of coremap and swap table.
 	//  Just make certain that swapin and swapout acquire in same order.)
-	//lock_acquire(swap_table_lk);
+
 	//Use the swap table to find the data we need.
+	lock_acquire(st->swap_table_lk);
 	int i = 0, n = array_num(st->entries);
+
 	unsigned int idx = 0;
 	struct swap_table_entry *ste = NULL;
 	struct page_table_entry *pte = NULL;
+
 	err = 0;
 	for (i=0; i<n; i++)
 	{
@@ -1331,13 +1336,16 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 		if (ste->pid == pid && ste->vpn == vpn)
 		{
 			//Call block read to retrieve the data from disk.
-			//lock_release(swap_table_lk);
+			//Assumption: calling block_read with the ppn fills that physical page.
 			err = block_read(*paddr, ste->disc_idx);
 			if (err)
 			{
 				panic("block_read failed in swapin for some reason.");
 			}
-			//Assumption: calling block_read with the ppn fills that physical page.
+			//TODO: Right now we will remove a swap table entry. Change that later.
+			bitmap_unmark(st->bit_map, ste->disc_idx);
+			array_remove(st->entries, i);
+			lock_release(st->swap_table_lk);
 
 			//Update the pte for the proc that owns this page.
 			struct proc *p = NULL;
@@ -1352,13 +1360,19 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 			pte->state = 1; //Mark it as being in memory.
 			lock_release(p->p_addrspace->pt->paget_lock);
 
-			//Mark the coremap page as owned by this proc and CLEAN_STATE.
+			//Mark the coremap page as owned by this proc and DIRTY_STATE..
+			//  TODO: Mark page as CLEAN once you change swapout to support that.
 			spinlock_acquire(&cm_splk);
-			cm_entry[*paddr/PAGE_SIZE].page_status = CLEAN_STATE;
+			cm_entry[*paddr/PAGE_SIZE].page_status = DIRTY_STATE;
 			cm_entry[*paddr/PAGE_SIZE].ref = 1;
 			spinlock_release(&cm_splk);
 			break;
 		}
+	}
+	if (i == n)
+	{
+		lock_release(st->swap_table_lk);
+		return -1;
 	}
 	return 0;
 }
