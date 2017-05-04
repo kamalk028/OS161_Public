@@ -44,6 +44,11 @@
 #include <bitmap.h>
 #include <kern/fcntl.h>
 #include <vfs.h>
+#include <uio.h>
+#include <fs.h>
+#include <vnode.h>
+#include <kern/stat.h>
+
 
 
 
@@ -372,8 +377,6 @@ coremap_init()
 void
 vm_bootstrap(void)
 {
-	// Do nothing. This function is called early in bootup.
-	// If we need anything initilized immediately, it'll go here.
 	// Allocate memory for the swap table here...
 	struct vnode *vn = NULL;
 	char *tmp = kstrdup(DISK_FILE_NAME);
@@ -384,9 +387,19 @@ vm_bootstrap(void)
 	}
 	else
 	{
-		is_disk_available = true;
+		struct stat stat;
+		VOP_STAT(vn, &stat);
+		unsigned size = stat.st_size;
+		unsigned npages = (size/PAGE_SIZE) + 1;
+		if(size % PAGE_SIZE == 0)
+		{
+			npages--;
+		}
 		st = st_create();
+		st->bit_map = bitmap_create(npages);
+		is_disk_available = true;
 		st->vnode = vn;
+
 	}
 	kfree(tmp);
 }
@@ -1208,4 +1221,74 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 
 	return 0;
 }
+
+//Swap a page out to disk. Figures out what to swap on its own.
+//int swapout()
+//{
+	//Check the value of is_disk_available. Return ENOMEM if not.
+	//Acquire the coremap lock and the swap table lock.
+	//Using an algorithm, figure out which page should be swapped out.
+	//(ISSUE: SWAPPING ALGO. Would take ages to check every pte
+	//  inside EVERY page table! Maybe rely on coremap instead?
+	//  Also, check for clean pages in the coremap. No data needs to be copied for that.
+	//Will now want to acquire a page table lock. ALWAYS ACQUIRE IN THAT ORDER!!
+	//Call bitmap_alloc to get a spot on the disk (reminder: it is an st object).
+	//Pass that index, and the vpn, into block_write.
+	//Use pt_lookup to see the old physical address.
+	//Possibly update the TLB to remove an entry (or all entries).
+	//ISSUE: Communicating with another CPU's TLB. Idk how.
+	//  Should we just call as_activate or something?
+	//  Can we find a proc's TLB once we've found the proc itself?
+	//Update the pte to indicate the page is on disk, and delete its ppn.
+	//If copy-on-write is implemented, and multiple proc's own a page,
+	//  carefully change the pte for each proc involved!
+	//Release paget_lock.
+	//Update the coremap to free the page. POSSIBLY fill in a new page.
+	//Release the coremap lock (done automatically by getppages).
+	//Update the swap table with the new vpn-diskblock pair.
+	//Release the lock on the swap table.
+	//Done? Idunno, permissions might also need to be considered.
+//}
+
+//Called if a TLB fault occus on a page that's on disk.
+//int swapin()
+//{
+	//First, we might need to call swapout().
+	//Call coremap_used_bytes, and see if it equals
+	//Acquire the locks in the same order: coremap, swap table, page table.
+	//
+//}
+
+//Copy a page of memory to disk. Called by swapout().
+int block_write(vaddr_t vpn, unsigned disk_idx)
+{
+	int err = 0;
+	struct iovec iov;
+	struct uio uio;
+	uio_uinit(&iov, &uio, (void*)vpn, 4096, disk_idx*PAGE_SIZE, UIO_WRITE);
+	err = VOP_WRITE(st->vnode, &uio);
+	if(err)
+	{
+		return err;
+	}
+	return 0;
+}
+
+//Copy a page of memory back from disk to memory.
+int block_read(vaddr_t vpn, unsigned disk_idx)
+{
+	int err = 0;
+	struct iovec iov;
+	struct uio uio;
+	uio_uinit(&iov, &uio, (void*)vpn, 4096, disk_idx*PAGE_SIZE, UIO_READ);
+	err = VOP_READ(st->vnode, &uio);
+	if(err)
+	{
+		return err;
+	}
+	return 0;
+}
+
+
+
 
