@@ -1301,6 +1301,7 @@ int swapout(int npages, paddr_t* ppn)
 //Called if a TLB fault occus on a page that's on disk.
 int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 {
+	//PTLOOKUP CHANGED!! 3.3: AFFECTS THIS, VM_FAULT, and SBRK.
 	int err = 0;
 	//First, we might need to call swapout().
 	if (total_npages == npages_used)
@@ -1344,6 +1345,7 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 			}
 			//TODO: Right now we will remove a swap table entry. Change that later.
 			bitmap_unmark(st->bit_map, ste->disc_idx);
+			ste_destroy(ste);
 			array_remove(st->entries, i);
 			lock_release(st->swap_table_lk);
 
