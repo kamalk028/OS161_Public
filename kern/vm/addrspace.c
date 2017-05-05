@@ -422,8 +422,14 @@ free_kpages(vaddr_t addr)
 int
 vm_fault(int faulttype, vaddr_t faultaddress)
 {
-	//To my surprise, this kassert was not triggerred.
 	KASSERT(spinlock_do_i_hold(&cm_splk) == 0);
+	bool cm_lk_held = spinlock_do_i_hold(&cm_splk);
+	if(cm_lk_held)
+	{
+		spinlock_release(&cm_splk);
+	}
+	//To my surprise, this kassert was not triggerred.
+	//KASSERT(spinlock_do_i_hold(&cm_splk) == 0);
 
 	paddr_t paddr = 0; //Used only as a value for getppages to fill.
 	unsigned int i = 0;
@@ -437,7 +443,6 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	uint32_t ppn = 0; //Used for page tabe lookup.
 
 	faultaddress &= PAGE_FRAME; //This effectively chops off 12 bits of faultaddress.
-	//kprintf("FAULTADDR: %x\n", faultaddress); //Don't put kprintf's in vm_fault...
 
 	DEBUG(DB_VM, "dumbvm: fault: 0x%x\n", faultaddress);
 
@@ -481,24 +486,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		if(faultaddress >= r->start && faultaddress < r->end)
 		{
 			valid_addr = 1;
-			as_region = r; //This copy is used after r is modified.
-			//If faultaddress is close to the bottom of the stack, grow the stack!
-			//Assumption: stack will be the only region past USERSTACK*3/4.
-			/*if ((faultaddress > (USERSTACK * 3 / 4)) && (faultaddress == r->start))
-			{
-				//Make sure the stack won't meet the heap if expanded.
-				//  Heap is always defined right after stack, so we can find it in the array.
-				r = array_get(as->as_regions, i+1);
-				if (r->end >= as_region->start - (6 * PAGE_SIZE))
-				{
-					panic("The stack has no room left to grow!");
-				}
-				//The stack gets six more virtual pages.
-				//Note that we do not allocate physical pages yet.
-				as_region->start -= 6 * PAGE_SIZE;
-				as_region->size += 6;
-				//NOT CERTAIN THAT UPDATING as_region ALSO UPDATES THE REAL REGION!!
-			}*/
+			as_region = r; 
 			break;
 		}
 	}
@@ -588,6 +576,10 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	(void)dummy;
 	//(void)curpid;
 	//(void)pte;
+	if(cm_lk_held)
+	{
+		spinlock_acquire(&cm_splk);
+	}
 	return 0;
 }
 
@@ -650,40 +642,6 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		return ENOMEM;
 	}
 
-
-	   //Old dumbvm code.
-
-/*	newas->as_vbase1 = old->as_vbase1;
-	newas->as_npages1 = old->as_npages1;
-	newas->as_vbase2 = old->as_vbase2;
-	newas->as_npages2 = old->as_npages2;
-
-	// (Mis)use as_prepare_load to allocate some physical memory.
-	if (as_prepare_load(newas)) {
-		as_destroy(newas);
-		return ENOMEM;
-	}
-
-	KASSERT(newas->as_pbase1 != 0);
-	KASSERT(newas->as_pbase2 != 0);
-	KASSERT(newas->as_stackpbase != 0);
-
-	memmove((void *)PADDR_TO_KVADDR(newas->as_pbase1),
-		(const void *)PADDR_TO_KVADDR(old->as_pbase1),
-		old->as_npages1*PAGE_SIZE);
-
-	memmove((void *)PADDR_TO_KVADDR(newas->as_pbase2),
-		(const void *)PADDR_TO_KVADDR(old->as_pbase2),
-		old->as_npages2*PAGE_SIZE);
-
-	memmove((void *)PADDR_TO_KVADDR(newas->as_stackpbase),
-		(const void *)PADDR_TO_KVADDR(old->as_stackpbase),
-		DUMBVM_STACKPAGES*PAGE_SIZE);
-
-	*ret = newas;
-	return 0;
-
-*/
 	/*
 	 * Our new code:
 	 */
@@ -703,9 +661,7 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		read = write = exec = 0;
 		r = array_get(old->as_regions, i);
 		KASSERT(r->start != 0); //dumbvm did this too.
-		//DEBUGGING: REMOVE KPRINTF's!!
-		//kprintf("Old start: %x\n", r->start);
-		//kprintf("Old end: %x\n", r->end);
+		
 		//Set permission variables.
 		if (r->permission >= 4) {read = 1;}
 		if (r->permission >= 6 || r->permission == 2 || r->permission == 3) {write = 1;}
@@ -720,55 +676,75 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		}
 		//New: Try to copy the actual contents of memory.
 		newr = array_get(old->as_regions, i);
-		//memmove((void *)newr->start, (const void *)r->start, (r->size * PAGE_SIZE));//PROBLEM: memmove may expect either paddr's or kvaddr's > 0x80000000, but we give small vaddr's.
-												//Might actually want to call memmove on the physical pages owned by the oldproc!
-		/*memmove((void *)PADDR_TO_KVADDR(newr->start),
-			(const void *)PADDR_TO_KVADDR(r->start),
-			(r->size * PAGE_SIZE));*/
-		//DEBUGGING: REMOVE KPRINTF's!!
-		//kprintf("New start: %x\n", newr->start);
-		//kprintf("New end: %x\n", newr->end);
 	}
 	//Now copy all the pte's, except allocte new physical pages for each entry.
-	lock_acquire(old->pt->paget_lock);
-	paddr_t temp_ppn = 0;
+	//lock_acquire(old->pt->paget_lock);
 	for (i = 0; i < num_pte; i++)
 	{
-		pte = array_get(old->pt->pt_array, i);
-		if(pte->state == 0)
-		{
-			err = swapin(pte->vpn, &temp_ppn, curproc->pid);
-			//the swapped in physical page should have FIXED_STATE to avoid another proc to swap it out.
-			if(err)
-			{
-				panic("In as_copy : swapin returned error:");
-			}
-		}
-		newppn = getupages(1);//Doing this actually assigns the wrong pid inside getupages...
+		newppn = getppages(1);//Doing this actually assigns the wrong pid inside getupages...
 		if(newppn == 0)
 		{
 			as_destroy(newas);//kfree(newas);
 			return ENOMEM;
 		}
-		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
-		//Now we re-adjust that pid value in the coremap. TODO: If swapping takes place just before this re-assignment, mass confusion WILL ensue. Rmv locks from getupages.
+		//Now we re-adjust that pid value in the coremap. 
+		//TODO: If swapping takes place just before this re-assignment, mass confusion WILL ensue. 
+		//Rmv locks from getupages.
 		spinlock_acquire(&cm_splk);
 		cm_entry[newppn/PAGE_SIZE].pid = newpid;
 		spinlock_release(&cm_splk);
+
+
+		lock_acquire(old->pt->paget_lock);
+		pte = array_get(old->pt->pt_array, i);
+		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
 		if(newpte == NULL)
 		{
 			free_ppages(newppn);
 			as_destroy(newas);//kfree(newas);
 			return ENOMEM;
 		}
-		pt_append(newas->pt, newpte);
-		//New: 3rd attempt: Copy the actual contents of memory in the physical pages.
-		//TODO: Maybe put a lock on these? Copying memory while it's being wirtten would break stuff...
-		memmove((void *)PADDR_TO_KVADDR(newpte->ppn),
+		if(pte->state == 0)
+		{
+			lock_acquire(st->swap_table_lk);
+			int i = 0, n = array_num(st->entries);
+
+			struct swap_table_entry *ste = NULL;
+			unsigned pid = curproc->pid;
+
+			for (i=0; i<n; i++)
+			{
+				ste = array_get(st->entries, i);
+				if (ste->pid == pid && ste->vpn == pte->vpn)
+				{
+					unsigned disc_idx = ste->disc_idx;
+					err = block_read(newppn, disc_idx);
+					if(err)
+					{
+						panic("In func: as_copy :::: block_read returned err");
+					}
+					break;
+				}
+			}
+
+			lock_release(st->swap_table_lk);
+		}
+		else if(pte->state == 1)
+		{
+			//New: 3rd attempt: Copy the actual contents of memory in the physical pages.
+			//TODO: Maybe put a lock on these? Copying memory while it's being wirtten would break stuff...
+			memmove((void *)PADDR_TO_KVADDR(newpte->ppn),
 			(const void *)PADDR_TO_KVADDR(pte->ppn),
 			PAGE_SIZE);
+		}
+		pt_append(newas->pt, newpte);
+
+		cm_entry[newppn/PAGE_SIZE].page_status = DIRTY_STATE;
+
+		num_pte = array_num(old->pt->pt_array);
+		lock_release(old->pt->paget_lock);
 	}
-	lock_release(old->pt->paget_lock);
+	//lock_release(old->pt->paget_lock);
 
 	//(void)old;
 	//(void)*ret;
@@ -1077,8 +1053,10 @@ static
 paddr_t
 pick_page(unsigned int *pid)
 {
+	unsigned limit = 100000;
+	unsigned ctr = 0;
 	spinlock_acquire(&cm_splk);
-	while(1)//If every single page is fixed, infinite loop. Don't think that's possible.
+	while(ctr < limit)//If every single page is fixed, infinite loop. Don't think that's possible.
 	{
 		clock++;
 		if (clock == total_npages) { clock = 0; }
@@ -1095,10 +1073,17 @@ pick_page(unsigned int *pid)
 		{
 			*pid = cm_entry[clock].pid;
 			cm_entry[clock].page_status = FIXED_STATE;
+			spinlock_release(&cm_splk);
 			return (clock * PAGE_SIZE);
 		}
+		ctr++;
+	}
+	if(ctr == limit)
+	{
+		panic("pick_page does not stop ::: ");
 	}
 	spinlock_release(&cm_splk);
+	return 0;
 }
 
 //Swap a page out to disk. Figures out what to swap on its own.
