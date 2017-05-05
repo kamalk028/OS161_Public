@@ -1310,7 +1310,7 @@ int block_write(paddr_t ppn, unsigned disk_idx)
 	int err = 0;
 	struct iovec iov;
 	struct uio uio;
-	uio_uinit(&iov, &uio, (void*)ppn, 4096, disk_idx*PAGE_SIZE, UIO_WRITE);
+	uio_kinit(&iov, &uio, (void*)ppn, 4096, disk_idx*PAGE_SIZE, UIO_WRITE);
 	err = VOP_WRITE(st->vnode, &uio);
 	if(err)
 	{
@@ -1325,7 +1325,7 @@ int block_read(paddr_t ppn, unsigned disk_idx)
 	int err = 0;
 	struct iovec iov;
 	struct uio uio;
-	uio_uinit(&iov, &uio, (void*)ppn, 4096, disk_idx*PAGE_SIZE, UIO_READ);
+	uio_kinit(&iov, &uio, (void*)ppn, 4096, disk_idx*PAGE_SIZE, UIO_READ);
 	err = VOP_READ(st->vnode, &uio);
 	if(err)
 	{
