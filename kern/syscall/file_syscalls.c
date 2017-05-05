@@ -1052,24 +1052,44 @@ sys_sbrk(intptr_t amount, int *ret)
 	//Only way to find out what was used is to scan the page table...
 	if (kamount < 0)
 	{
-		unsigned idx = 0;
 		vaddr_t vpn;
 		paddr_t ppn = 0;
 		int not_found = 0;
 		for (vpn = r->end; vpn < (r->end - kamount); vpn+=PAGE_SIZE)
 		{
-			not_found = pt_lookup1(curproc->p_addrspace->pt, vpn, r->permission, &ppn, &idx);
-			if (not_found)
+			struct page_table_entry* pte = NULL;
+			not_found = pt_lookup(curproc->p_addrspace->pt, vpn, r->permission, &ppn, &pte);
+			//Handle swap in here: 
+			if (not_found == 1) 
+			{
+				remove_pageondisk(vpn);
+			}
+			else if(not_found)
 			{
 				;
 			}
 			else
 			{
 				//Need to update TLB and pte.
+				//KAMAL:ACQUIRE PAGE_TABLE LOCK
 				free_ppages(ppn);
-				struct page_table_entry* pte = array_get(curproc->p_addrspace->pt->pt_array,idx);
 				kfree(pte);
-				array_remove(curproc->p_addrspace->pt->pt_array,idx);
+
+				struct page_table *pt = curproc->p_addrspace->pt;
+				lock_acquire(pt->paget_lock);
+				struct page_table_entry *t_pte = NULL;
+				int j = 0;
+				int n = array_num(pt->pt_array);
+				for(j=0; j<n; j++)
+				{
+					t_pte = array_get(pt->pt_array, j);
+					if(t_pte == pte)
+					{
+						array_remove(pt->pt_array, j);
+						break;
+					}
+				}
+				lock_release(pt->paget_lock);
 				int t = tlb_probe(vpn, ppn);
 				if(t > -1)
 				{

@@ -1253,7 +1253,7 @@ struct page_table_entry *pte_create(uint32_t vpn, uint32_t ppn, uint8_t pm, bool
 }
 
 //Just like pt_lookup, but it returns the index of the pte.
-int pt_lookup1 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, unsigned *idx)
+int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, struct page_table_entry **res)
 {
 	lock_acquire(pt->paget_lock);
 	(void)pm;
@@ -1267,11 +1267,19 @@ int pt_lookup1 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, 
 		{
 			if(pte->valid)
 			{
-				*ppn = pte->ppn;
+				*res = pte;
 				pte->ref = 1;
-				*idx = i;
-				lock_release(pt->paget_lock);
-				return 0;
+				if(pte->state)
+				{
+					lock_release(pt->paget_lock);
+					*ppn = pte->ppn;
+					return 0;
+				}
+				else
+				{
+					lock_release(pt->paget_lock);
+					return 1;
+				}
 			}//3.3: Need to check whether page is on disk or not!!
 			  //BEWARE DEADLOCKS!! If a page needs to be swapped in, and getppages needs to be called, MKAE SURE the lock in getppages isn't held by a proc waiting on pt_lookup!!
 		}
@@ -1285,6 +1293,7 @@ int pt_lookup1 (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, 
 	return -1; //This means no page table entry for given vpn.
 }
 
+/*
 //Determines if a particular vpn is in a page table. If so, return its ppn or disk block.
 int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn)
 {
@@ -1314,22 +1323,30 @@ int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn)
 	}
 	lock_release(pt->paget_lock);
 	return -1; //This means no page table entry for given vpn.
-}
+}*/
 
-int pt_plookup (struct page_table *pt, paddr_t ppn, struct page_table_entry *pte)
+
+int pt_plookup (struct page_table *pt, paddr_t ppn, struct page_table_entry **pte)
 {
+	/*
+ 	 * Only use of the function below, is inside swapout, it sets the state of the pte as 0
+ 	*/
 	lock_acquire(pt->paget_lock);
 	int num = array_num(pt->pt_array);
+	struct page_table_entry *t_pte = NULL;
 	for (int i = 0; i < num; i++)
 	{
-		pte = array_get(pt->pt_array, i);
-		if(ppn == pte->ppn && pte->valid)
+		t_pte = array_get(pt->pt_array, i);
+		if(ppn == t_pte->ppn && t_pte->valid)
 		{
+			KASSERT(t_pte->state == 1);
+			t_pte->state = 0;
+			*pte = t_pte;
 			lock_release(pt->paget_lock);
 			return 0;
 		}
 	}
-	pte = NULL;
+	*pte = NULL;
 	lock_release(pt->paget_lock);
 	return -1;
 }
