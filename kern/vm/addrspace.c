@@ -146,30 +146,34 @@ _getppages(unsigned long npages, bool is_kern)
 	}
 	if(i == total_npages)//Coremap is full.
 	{
-		if(CURCPU_EXISTS()) //&& spinlock_do_i_hold(&cm_splk))
+		/*if(CURCPU_EXISTS()) //&& spinlock_do_i_hold(&cm_splk))
 		{
 			spinlock_release(&cm_splk);
-		}
+		}*/
 
 		if(is_disk_available)
 		{
+			//KASSERT(npages != NULL);
 			addr = swapout(npages);
 			KASSERT((addr & PAGE_FRAME) == addr);
 			//If it's a user page, set it back to dirty.
+			/*if(CURCPU_EXISTS()) //&& spinlock_do_i_hold(&cm_splk))
+			{
+				spinlock_acquire(&cm_splk);
+			}*/
+			cm_entry[addr/PAGE_SIZE].pid = curproc->pid;
+			//kprintf("pid value in coremap: %u\n", curproc->pid);
 			cm_entry[addr/PAGE_SIZE].page_status = pg_status;
 		}
 		else
 		{
+			spinlock_release(&cm_splk);
 			return 0;
 		}
 		/*if(err)
 		{
 			return 0;
 		}*/
-		if(CURCPU_EXISTS()) //&& spinlock_do_i_hold(&cm_splk))
-		{
-			spinlock_acquire(&cm_splk);
-		}
 	}
 	else//We found however many consecutive free pages we needed.
 	{
@@ -194,7 +198,7 @@ _getppages(unsigned long npages, bool is_kern)
 		npages_used+=npages;
 	}
 
-	as_zero_region(addr, npages);//HANG HERE. After swapout.
+	as_zero_region(addr, npages);
 
 	if(CURCPU_EXISTS())// && spinlock_do_i_hold(&cm_splk))
 	{
@@ -301,6 +305,7 @@ coremap_init()
 		cm_entry[i].npages = first_chunk;
 		cm_entry[i].pid = 1;//Special pid value for kernel involved memory.
 		cm_entry[i].ref = false;
+		//cm_entry[i].in_evict = 0;
 	}
 
 	for (i = first_chunk; i < num_core_entries; i++)
@@ -309,6 +314,7 @@ coremap_init()
 		cm_entry[i].npages = 0;
 		cm_entry[i].pid = 0;//Default value; normally assigned curproc->pid once memory is fixed.
 		cm_entry[i].ref = false;
+		//cm_entry[i].in_evict = 0;
 	}
 	npages_used = first_chunk;
 	kern_pages = first_chunk;
@@ -712,7 +718,7 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		spinlock_release(&cm_splk);
 
 
-		lock_acquire(old->pt->paget_lock);
+		//lock_acquire(old->pt->paget_lock);
 		pte = array_get(old->pt->pt_array, i);
 		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
 		if(newpte == NULL)
@@ -723,7 +729,7 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		}
 		if(pte->state == 0)
 		{
-			lock_acquire(swap_table_lk);
+			//lock_acquire(swap_table_lk);
 			int i = 0, n = 512;
 
 			//struct swap_table ste = NULL;
@@ -745,7 +751,7 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 				}
 			}
 
-			lock_release(swap_table_lk);
+			//lock_release(swap_table_lk);
 		}
 		else if(pte->state == 1)
 		{
@@ -760,7 +766,7 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		cm_entry[newppn/PAGE_SIZE].page_status = DIRTY_STATE;
 
 		num_pte = array_num(old->pt->pt_array);
-		lock_release(old->pt->paget_lock);
+		//lock_release(old->pt->paget_lock);
 	}
 	//lock_release(old->pt->paget_lock);
 
@@ -1073,13 +1079,13 @@ pick_page(unsigned int *pid)
 {
 	//unsigned limit = 10000000;
 	//unsigned ctr = 0;
-	spinlock_acquire(&cm_splk);
+	//spinlock_acquire(&cm_splk);
 	while(1)//If every single page is fixed, infinite loop. Don't think that's possible.
 	{
 		clock++;
 		if (clock == total_npages) { clock = 0; }
 
-		if(cm_entry[clock].page_status == FIXED_STATE)
+		if(cm_entry[clock].page_status == FIXED_STATE || cm_entry[clock].page_status == FREE_STATE)
 		{
 			continue;
 		}
@@ -1090,8 +1096,9 @@ pick_page(unsigned int *pid)
 		else
 		{
 			*pid = cm_entry[clock].pid;
+			//kprintf("Pid retrieved from pick_page: %u\n", *pid);
 			cm_entry[clock].page_status = FIXED_STATE;
-			spinlock_release(&cm_splk);
+			//spinlock_release(&cm_splk);
 			return (clock * PAGE_SIZE);
 		}
 		//ctr++;
@@ -1100,7 +1107,7 @@ pick_page(unsigned int *pid)
 	{
 		panic("pick_page does not stop ::: ");
 	}*/
-	spinlock_release(&cm_splk);
+	//spinlock_release(&cm_splk);
 	panic("How did our code hit the bottom of pick_page?!");
 	return 0;
 }
@@ -1123,12 +1130,18 @@ paddr_t swapout(int npages)
 
        paddr_t ppn = pick_page(&s_pid);
        struct proc* s_proc = get_proc(s_pid);
+	//lock_acquire(s_proc->p_addrspace->pt->paget_lock);
+	KASSERT(s_proc != NULL);
+	KASSERT(s_proc->p_addrspace != NULL);
+	KASSERT(s_proc->p_addrspace->pt != NULL);
        struct page_table *pt = s_proc->p_addrspace->pt;
 
        /* function below changes the returned pte->state to 0
        */
        struct page_table_entry *pte = NULL;
+	//lock_acquire(pt->paget_lock);
        int err = pt_plookup(pt, ppn, &pte);
+	KASSERT(pte->state == 0);
        as_activate();
 
        KASSERT(err == 0);
@@ -1139,19 +1152,22 @@ paddr_t swapout(int npages)
 	while(st[st_idx].pid != 0)
 	{
 		st_idx++;
-		if (st_idx == 512) { panic("We ran out of swap table entries!"); }
+		//if (st_idx == 8192) { panic("We ran out of swap table entries!"); }
 	}
-       lock_acquire(swap_table_lk);
+       //lock_acquire(swap_table_lk);
        unsigned disc_idx = bitmap_alloc(st_bit_map, &disc_idx);
        //call block write 
+	spinlock_release(&cm_splk);
        err = block_write(ppn, disc_idx);//APPARENTLY a swapin can occur during this.
        //err = block_write(pte->vpn, disc_idx);
        if(err)
        {
-               lock_release(swap_table_lk);
+               //lock_release(pt->paget_lock);
+		//lock_release(swap_table_lk);
 		panic("block_write failed in swapout!");
                return -1;
        }
+	spinlock_acquire(&cm_splk);
        st[st_idx].pid = s_pid;
        st[st_idx].vpn = pte->vpn;
        st[st_idx].disc_idx = disc_idx;
@@ -1163,7 +1179,8 @@ paddr_t swapout(int npages)
 
        //On success, assign values to the ste
        //add the ste to the swap_table
-       lock_release(swap_table_lk);
+       //lock_release(swap_table_lk);
+	//lock_release(pt->paget_lock);
 
 
        //change the cm_entry page_status to DIRTY_STATE, if it's a user page.
@@ -1203,7 +1220,7 @@ int remove_pageondisk(vaddr_t vpn)
 	//locate the swap_table_entry using pid and vpn
 	unsigned pid = curproc->pid;
 
-	lock_acquire(swap_table_lk);
+	//lock_acquire(swap_table_lk);
 	int i = 0, n = 512;
 
 	//struct swap_table ste = NULL;
@@ -1231,7 +1248,7 @@ int remove_pageondisk(vaddr_t vpn)
 		}
 	}
 
-	lock_release(swap_table_lk);
+	//lock_release(swap_table_lk);
 	if(!temp)
 	{
 		panic("::: We dont have a swap_table_entry for this vpn ::: ");
@@ -1240,7 +1257,7 @@ int remove_pageondisk(vaddr_t vpn)
 	struct addrspace *as = proc_getas();
 	struct page_table *pt = as->pt;
 	
-	lock_acquire(pt->paget_lock);
+	//lock_acquire(pt->paget_lock);
 	n = array_num(pt->pt_array);
 	for(i = 0; i<n; i++)
 	{
@@ -1250,7 +1267,7 @@ int remove_pageondisk(vaddr_t vpn)
 			break;
 		}
 	}
-	lock_release(pt->paget_lock);
+	//lock_release(pt->paget_lock);
 	kfree(pte); //KAMAL: POSSIBLE DEADBEEF ISSUE
 	return 0;
 }
@@ -1269,7 +1286,7 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 	//  Just make certain that swapin and swapout acquire in same order.)
 
 	//Use the swap table to find the data we need.
-	lock_acquire(swap_table_lk);
+	//lock_acquire(swap_table_lk);
 	int i = 0, n = 512;
 
 	//struct swap_table ste = NULL;
@@ -1296,19 +1313,21 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 			st[i].disc_idx = 0;
 			st[i].pte = NULL;
 			//array_remove(st->entries, i);
-			lock_release(swap_table_lk);
+			//lock_release(swap_table_lk);
 
 			//Update the pte for the proc that owns this page.
 			struct proc *p = NULL;
 			p = get_proc(pid);
+			KASSERT(p != NULL);
 			err = pt_lookup(p->p_addrspace->pt, vpn, 0, paddr, &pte);
 			if(err == 0 || err == -1)
 			{
 				panic("Page table out of synch while swapping in!");
 			}
+			KASSERT(pte != NULL);
 			//lock_acquire(p->p_addrspace->pt->paget_lock);
 			pte->ppn = *paddr;
-			pte->state = 1; //Mark it as being in memory.
+			pte->state = 1; //Mark it as being in memory.//FAILS SOMEHOW.
 			//lock_release(p->p_addrspace->pt->paget_lock);
 
 			//Mark the coremap page as owned by this proc and DIRTY_STATE..
@@ -1322,7 +1341,8 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 	}
 	if (i == n)
 	{
-		lock_release(swap_table_lk);
+		//lock_release(swap_table_lk);
+		panic("Swapin couldn't find its page!");
 		return -1;
 	}
 	return 0;

@@ -1255,7 +1255,7 @@ struct page_table_entry *pte_create(uint32_t vpn, uint32_t ppn, uint8_t pm, bool
 //Just like pt_lookup, but it returns the index of the pte.
 int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, struct page_table_entry **res)
 {
-	lock_acquire(pt->paget_lock);
+	//lock_acquire(pt->paget_lock);
 	(void)pm;
 	int num = array_num(pt->pt_array);
 	//bool has_entry = 0;
@@ -1271,13 +1271,13 @@ int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, s
 				pte->ref = 1;
 				if(pte->state)
 				{
-					lock_release(pt->paget_lock);
+					//lock_release(pt->paget_lock);
 					*ppn = pte->ppn;
 					return 0;
 				}
 				else
 				{
-					lock_release(pt->paget_lock);
+					//lock_release(pt->paget_lock);
 					return 1;
 				}
 			}//3.3: Need to check whether page is on disk or not!!
@@ -1289,7 +1289,7 @@ int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, s
 				    // The purpose of setting and zero-ing pte->ref is to help the swapping algorithm.
 		}
 	}
-	lock_release(pt->paget_lock);
+	//lock_release(pt->paget_lock);
 	return -1; //This means no page table entry for given vpn.
 }
 
@@ -1331,7 +1331,8 @@ int pt_plookup (struct page_table *pt, paddr_t ppn, struct page_table_entry **pt
 	/*
  	 * Only use of the function below, is inside swapout, it sets the state of the pte as 0
  	*/
-	lock_acquire(pt->paget_lock);
+	//Acquire locks outside function!
+	//lock_acquire(pt->paget_lock);
 	int num = array_num(pt->pt_array);
 	struct page_table_entry *t_pte = NULL;
 	for (int i = 0; i < num; i++)
@@ -1342,12 +1343,12 @@ int pt_plookup (struct page_table *pt, paddr_t ppn, struct page_table_entry **pt
 			KASSERT(t_pte->state == 1);
 			t_pte->state = 0;
 			*pte = t_pte;
-			lock_release(pt->paget_lock);
+			//lock_release(pt->paget_lock);
 			return 0;
 		}
 	}
 	*pte = NULL;
-	lock_release(pt->paget_lock);
+	//lock_release(pt->paget_lock);
 	return -1;
 }
 
