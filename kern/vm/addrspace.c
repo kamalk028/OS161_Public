@@ -1068,7 +1068,7 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 
 	/* Initial user-level stack pointer */
 	*stackptr = USERSTACK; //Top of the stack.
-	//*heap_break = USERSTACK / 2; //Top of the heap, can be moved with sbrk().
+	// *heap_break = USERSTACK / 2; //Top of the heap, can be moved with sbrk().
 
 	return 0;
 }
