@@ -121,12 +121,16 @@ struct as_region {
 
 //Swap table
 struct swap_table{
-	struct array *entries;
-	struct lock *swap_table_lk;
-	struct vnode *vnode; 
-	struct bitmap *bit_map;
+	//struct array *entries;
+	//struct lock *swap_table_lk;
+	//struct vnode *vnode; 
+	//struct bitmap *bit_map;
+	uint32_t pid;
+	uint32_t vpn;
+	uint32_t disc_idx;
+	struct page_table_entry* pte;
 };
-
+/*
 struct swap_table_entry{
 	uint32_t pid;
 	uint32_t vpn;
@@ -134,11 +138,11 @@ struct swap_table_entry{
 	void* buff;
 	struct page_table_entry* pte;
 	//Add more stuff as needed
-};
+};*/
 
-struct swap_table* st_create(void);
-struct swap_table_entry* ste_create(void);
-void ste_destroy(struct swap_table_entry* ste);
+//struct swap_table* st_create(void);
+//struct swap_table_entry* ste_create(void);
+//void ste_destroy(struct swap_table_entry* ste);
 
 
 //Coremap functions
@@ -174,7 +178,7 @@ int               as_define_stack(struct addrspace *as, vaddr_t *initstackptr);
 /*
 Functions related to swapping
 */
-int swapout(int npages, paddr_t* ppn);
+paddr_t swapout(int npages);
 int remove_pageondisk(vaddr_t vpn);
 int block_read(paddr_t ppn, unsigned disk_idx);
 int block_write(paddr_t ppn, unsigned disk_idx);
