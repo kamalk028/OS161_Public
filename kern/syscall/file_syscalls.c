@@ -1063,6 +1063,8 @@ sys_sbrk(intptr_t amount, int *ret)
 			if (not_found == 1) 
 			{
 				remove_pageondisk(vpn);
+				kfree(pte);
+
 			}
 			else if(not_found)
 			{
@@ -1074,7 +1076,10 @@ sys_sbrk(intptr_t amount, int *ret)
 				//KAMAL:ACQUIRE PAGE_TABLE LOCK
 				free_ppages(ppn);
 				kfree(pte);
+			}
 
+			if(not_found == 1 || not_found == 0)
+			{
 				struct page_table *pt = curproc->p_addrspace->pt;
 				lock_acquire(pt->paget_lock);
 				struct page_table_entry *t_pte = NULL;
