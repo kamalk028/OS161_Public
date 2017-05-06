@@ -151,6 +151,7 @@ struct coremap {
 	uint32_t npages;//Number of pages used by a particular chunk.
 	uint32_t pid;//pid of owner process. Set to 1 for kernel.
 	bool ref;
+	//struct page_table_entry *pte;
 };
 void		  coremap_init(void);
 

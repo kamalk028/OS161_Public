@@ -1268,7 +1268,7 @@ int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, s
 			if(pte->valid)
 			{
 				*res = pte;
-				pte->ref = 1;
+				pte->ref = 1;//NOT USED.
 				if(pte->state)
 				{
 					//lock_release(pt->paget_lock);
@@ -1277,6 +1277,7 @@ int pt_lookup (struct page_table *pt, uint32_t vpn, uint8_t pm, uint32_t *ppn, s
 				}
 				else
 				{
+					//This case is meant for swapin.
 					//lock_release(pt->paget_lock);
 					return 1;
 				}
@@ -1340,6 +1341,8 @@ int pt_plookup (struct page_table *pt, paddr_t ppn, struct page_table_entry **pt
 		t_pte = array_get(pt->pt_array, i);
 		if(ppn == t_pte->ppn && t_pte->valid)
 		{
+			//kprintf("About to swap out %x\n", t_pte->ppn);
+			//kprintf("Being done by pid %u\n", curproc->pid);
 			KASSERT(t_pte->state == 1);
 			t_pte->state = 0;
 			*pte = t_pte;

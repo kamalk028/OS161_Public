@@ -76,7 +76,7 @@ static unsigned int total_npages = 0;//Total number of pages in the core map.
 static struct spinlock cm_splk;
 
 //Swap table objects.
-static struct swap_table st[512];
+static struct swap_table st[4096];
 static bool is_disk_available;
 static unsigned int clock = 0; //Used in clock-LRU algorithm for selecting a page to swap.
 static struct lock *swap_table_lk = NULL;
@@ -161,6 +161,7 @@ _getppages(unsigned long npages, bool is_kern)
 			{
 				spinlock_acquire(&cm_splk);
 			}*/
+			KASSERT(cm_entry[addr/PAGE_SIZE].pid != 1);
 			cm_entry[addr/PAGE_SIZE].pid = curproc->pid;
 			//kprintf("pid value in coremap: %u\n", curproc->pid);
 			cm_entry[addr/PAGE_SIZE].page_status = pg_status;
@@ -181,6 +182,7 @@ _getppages(unsigned long npages, bool is_kern)
 		addr = i * PAGE_SIZE;
 		while(cont_pages > 0)
 		{
+			KASSERT(cm_entry[i].pid != 1);
 			cm_entry[i].page_status = pg_status;
 			cm_entry[i].npages = npages;
 			if(CURCPU_EXISTS())
@@ -306,6 +308,7 @@ coremap_init()
 		cm_entry[i].pid = 1;//Special pid value for kernel involved memory.
 		cm_entry[i].ref = false;
 		//cm_entry[i].in_evict = 0;
+		//Leave the pte field alone.
 	}
 
 	for (i = first_chunk; i < num_core_entries; i++)
@@ -714,6 +717,7 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		//TODO: If swapping takes place just before this re-assignment, mass confusion WILL ensue. 
 		//Rmv locks from getupages.
 		spinlock_acquire(&cm_splk);
+		KASSERT(cm_entry[newppn/PAGE_SIZE].pid != 1);
 		cm_entry[newppn/PAGE_SIZE].pid = newpid;
 		spinlock_release(&cm_splk);
 
@@ -764,6 +768,7 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		pt_append(newas->pt, newpte);
 
 		cm_entry[newppn/PAGE_SIZE].page_status = DIRTY_STATE;
+		KASSERT(cm_entry[newppn/PAGE_SIZE].pid != 1);
 
 		num_pte = array_num(old->pt->pt_array);
 		//lock_release(old->pt->paget_lock);
@@ -1099,6 +1104,7 @@ pick_page(unsigned int *pid)
 			//kprintf("Pid retrieved from pick_page: %u\n", *pid);
 			cm_entry[clock].page_status = FIXED_STATE;
 			//spinlock_release(&cm_splk);
+			if (cm_entry[clock].pid == 1) { panic("Attempting to swap out kernel page!!"); }
 			return (clock * PAGE_SIZE);
 		}
 		//ctr++;
@@ -1113,6 +1119,7 @@ pick_page(unsigned int *pid)
 }
 
 //Swap a page out to disk. Figures out what to swap on its own.
+//We are holding the coremap spinlock when we reach this function.
 paddr_t swapout(int npages)
 {
 	//Check the value of is_disk_available. Return ENOMEM if not.
@@ -1129,6 +1136,10 @@ paddr_t swapout(int npages)
         */
 
        paddr_t ppn = pick_page(&s_pid);
+
+	//get_proc requires getting a proc_table lock breifly.
+	//  But, we are holding a spinlock now, right?
+	KASSERT(spinlock_do_i_hold(&cm_splk));
        struct proc* s_proc = get_proc(s_pid);
 	//lock_acquire(s_proc->p_addrspace->pt->paget_lock);
 	KASSERT(s_proc != NULL);
@@ -1155,7 +1166,9 @@ paddr_t swapout(int npages)
 		//if (st_idx == 8192) { panic("We ran out of swap table entries!"); }
 	}
        //lock_acquire(swap_table_lk);
-       unsigned disc_idx = bitmap_alloc(st_bit_map, &disc_idx);
+       unsigned disc_idx = 0;
+	bitmap_alloc(st_bit_map, &disc_idx);
+
        //call block write 
 	spinlock_release(&cm_splk);
        err = block_write(ppn, disc_idx);//APPARENTLY a swapin can occur during this.
@@ -1167,6 +1180,7 @@ paddr_t swapout(int npages)
 		panic("block_write failed in swapout!");
                return -1;
        }
+	pte->ppn = 0;
 	spinlock_acquire(&cm_splk);
        st[st_idx].pid = s_pid;
        st[st_idx].vpn = pte->vpn;
@@ -1215,6 +1229,7 @@ paddr_t swapout(int npages)
 	//Done? Idunno, permissions might also need to be considered.
 }
 
+//To be used by as_destroy.
 int remove_pageondisk(vaddr_t vpn)
 {
 	//locate the swap_table_entry using pid and vpn
@@ -1319,6 +1334,7 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 			struct proc *p = NULL;
 			p = get_proc(pid);
 			KASSERT(p != NULL);
+			spinlock_acquire(&cm_splk);//SYNCH ISSUE: Will need to acquire paget_lock before this.
 			err = pt_lookup(p->p_addrspace->pt, vpn, 0, paddr, &pte);
 			if(err == 0 || err == -1)
 			{
@@ -1327,15 +1343,35 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 			KASSERT(pte != NULL);
 			//lock_acquire(p->p_addrspace->pt->paget_lock);
 			pte->ppn = *paddr;
-			pte->state = 1; //Mark it as being in memory.//FAILS SOMEHOW.
+			pte->state = 1; //Mark it as being in memory.
+
+			//kprintf("Swapped page into %x.\n", pte->ppn);
+
+			//STUPID DEBUG: Make sure modifying pte returned by ptlookup also modifies the original.
+			/*unsigned int n = array_num(p->p_addrspace->pt->pt_array);
+			unsigned int idx = 0;
+			struct page_table_entry *pte2 = NULL;
+			for (idx = 0; idx < n; idx++)
+			{
+				pte2 = array_get(p->p_addrspace->pt->pt_array, idx);
+				if (pte2->vpn == pte->vpn) {break;}
+			}
+
+			pte->ppn = *paddr;
+			pte->state = 1; //Mark it as being in memory.
+			KASSERT(pte2->state == 1);*/
+
+			//What if a process swaps this page back out?
 			//lock_release(p->p_addrspace->pt->paget_lock);
 
 			//Mark the coremap page as owned by this proc and DIRTY_STATE..
 			//  TODO: Mark page as CLEAN once you change swapout to support that.
-			spinlock_acquire(&cm_splk);
+			//spinlock_acquire(&cm_splk);
 			cm_entry[*paddr/PAGE_SIZE].page_status = DIRTY_STATE;
+			KASSERT(cm_entry[*paddr/PAGE_SIZE].pid != 1);
 			cm_entry[*paddr/PAGE_SIZE].ref = 1;
 			spinlock_release(&cm_splk);
+			KASSERT(pte->state == 1);//Checking for data race.
 			break;
 		}
 	}
