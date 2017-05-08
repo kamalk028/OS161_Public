@@ -815,6 +815,8 @@ as_destroy(struct addrspace *as)
 		else
 		{
 			remove_pageondisk(pte->vpn);
+			kfree(pte);
+			array_remove(as->pt->pt_array, 0);
 		}
 	}
 	array_destroy(as->pt->pt_array);
@@ -1167,8 +1169,7 @@ paddr_t swapout(int npages)
 	}
        //lock_acquire(swap_table_lk);
        unsigned disc_idx = 0;
-	bitmap_alloc(st_bit_map, &disc_idx);
-
+       bitmap_alloc(st_bit_map, &disc_idx);
        //call block write 
 	spinlock_release(&cm_splk);
        err = block_write(ppn, disc_idx);//APPARENTLY a swapin can occur during this.
@@ -1180,7 +1181,8 @@ paddr_t swapout(int npages)
 		panic("block_write failed in swapout!");
                return -1;
        }
-	pte->ppn = 0;
+       pte->ppn = 0;
+
 	spinlock_acquire(&cm_splk);
        st[st_idx].pid = s_pid;
        st[st_idx].vpn = pte->vpn;
@@ -1269,21 +1271,6 @@ int remove_pageondisk(vaddr_t vpn)
 		panic("::: We dont have a swap_table_entry for this vpn ::: ");
 	}
 
-	struct addrspace *as = proc_getas();
-	struct page_table *pt = as->pt;
-	
-	//lock_acquire(pt->paget_lock);
-	n = array_num(pt->pt_array);
-	for(i = 0; i<n; i++)
-	{
-		if(pte == array_get(pt->pt_array, i))
-		{
-			array_remove(pt->pt_array, i);
-			break;
-		}
-	}
-	//lock_release(pt->paget_lock);
-	kfree(pte); //KAMAL: POSSIBLE DEADBEEF ISSUE
 	return 0;
 }
 
