@@ -244,6 +244,9 @@ proc_destroy(struct proc *proc)
 	KASSERT(proc != NULL);
 	KASSERT(proc != kproc);
 
+	//This should not be necessary, but our as_destroy assumes it is.
+	KASSERT(proc == curproc);
+
 	kfree(proc->tframe);
 	ft_destroy(proc->ft);
 
@@ -490,7 +493,7 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 		return NULL;
 	}
 	//spinlock_release(&curproc->p_lock);
-	lock_release(pt_lock);
+	lock_release(pt_lock);//HOW DID A PROCESS GET HERE WITHOUT THE LOCK?!
 
 
 	if(newproc->p_addrspace == NULL)
