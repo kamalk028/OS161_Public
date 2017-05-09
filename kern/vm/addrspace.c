@@ -399,7 +399,7 @@ vm_tlbshootdown(const struct tlbshootdown *ts)
 	//panic("dumbvm tried to do tlb shootdown?!\n");
 }
 
-void free_ppages(paddr_t p_addr)
+int free_ppages(paddr_t p_addr)
 {
 	if(CURCPU_EXISTS()) { KASSERT(!spinlock_do_i_hold(&cm_splk)); }
 	//dumbvm_can_sleep();//Sometimes, we are in an interrupt handler when we get here.
@@ -414,6 +414,11 @@ void free_ppages(paddr_t p_addr)
 	{
 		KASSERT(cm_entry[i].pid != 1);
 		KASSERT(cm_entry[i].page_status != FREE_STATE);
+		if (cm_entry[i].pid == 0) //The page is in the middle of being swapped out.
+		{				//No risk freeing a wrong page, thanks to pte->state checks.
+			spinlock_release(&cm_splk);
+			return 1; //Signals to the caller that the page is being swapped out.
+		}
 		cm_entry[i].page_status = FREE_STATE;
 		cm_entry[i].npages = 0;
 		/*if(CURCPU_EXISTS())
@@ -431,6 +436,7 @@ void free_ppages(paddr_t p_addr)
 	{
 		spinlock_release(&cm_splk);
 	}
+	return 0;
 }
 
 void
@@ -675,7 +681,7 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 	struct as_region *r, *newr;
 	struct page_table_entry *pte, *newpte;//We will copy all pte's as well, except the new as will get different ppn's.
 	unsigned int num_regions = array_num(old->as_regions);
-	unsigned int num_pte = array_num(old->pt->pt_array);
+	//unsigned int num_pte = array_num(old->pt->pt_array);
 	unsigned int i;
 	bool read = 0, write = 0, exec = 0;
 	paddr_t newppn;
@@ -704,10 +710,12 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		newr = array_get(old->as_regions, i);
 	}
 	//Now copy all the pte's, except allocte new physical pages for each entry.
-	//lock_acquire(old->pt->paget_lock);
+	//lock_acquire(old->pt->paget_lock); //Nothing but as_destroy can change number of entries.
+	unsigned int num_pte = array_num(old->pt->pt_array);
 	for (i = 0; i < num_pte; i++)
 	{
-		newppn = getppages(1);//Doing this actually assigns the wrong pid inside getupages...
+		//DEADLOCK ISSUE! Do not try holding the paget_lock while calling getppages.
+		newppn = getppages(1);//Doing this actually assigns the wrong pid, temporarily. Doesn't matter since page won't get swapped out with FIXED_STATE.
 		if(newppn == 0)
 		{
 			as_destroy(newas);//kfree(newas);
@@ -721,19 +729,21 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		cm_entry[newppn/PAGE_SIZE].pid = newpid;
 		spinlock_release(&cm_splk);
 
-
-		//lock_acquire(old->pt->paget_lock);
+		lock_acquire(old->pt->paget_lock);
 		pte = array_get(old->pt->pt_array, i);
 		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
 		if(newpte == NULL)
 		{
+			lock_release(old->pt->paget_lock);
 			free_ppages(newppn);
 			as_destroy(newas);//kfree(newas);
 			return ENOMEM;
 		}
 		if(pte->state == 0)
 		{
-			//lock_acquire(swap_table_lk);
+			lock_release(old->pt->paget_lock);
+			//Only possibility for data race is if this page is gonna get swapped in. Which I don't think is possible here.
+			lock_acquire(swap_table_lk);
 			int i = 0, n = 512;
 
 			//struct swap_table ste = NULL;
@@ -754,8 +764,7 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 					break;
 				}
 			}
-
-			//lock_release(swap_table_lk);
+			lock_release(swap_table_lk);
 		}
 		else if(pte->state == 1)
 		{
@@ -764,10 +773,11 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 			memmove((void *)PADDR_TO_KVADDR(newpte->ppn),
 			(const void *)PADDR_TO_KVADDR(pte->ppn),
 			PAGE_SIZE);
+			lock_release(old->pt->paget_lock);
 		}
 		pt_append(newas->pt, newpte);
 
-		cm_entry[newppn/PAGE_SIZE].page_status = DIRTY_STATE;
+		cm_entry[newppn/PAGE_SIZE].page_status = DIRTY_STATE;//No need to get lock here, since a fixed page won't get swapped out.
 		KASSERT(cm_entry[newppn/PAGE_SIZE].pid != 1);
 
 		num_pte = array_num(old->pt->pt_array);
@@ -803,12 +813,22 @@ as_destroy(struct addrspace *as)
 	}
 	array_destroy(as->as_regions);
 	//All physical pages held by the address space must be set to free! Scan the page table!
+	lock_acquire(as->pt->paget_lock);
 	while(array_num(as->pt->pt_array))
 	{
 		pte = array_get(as->pt->pt_array, 0);
+		//acquire page table lock here!
 		if(pte->state)
 		{
-			free_ppages(pte->ppn);//ASST3.3: Will want to check if the page is on disk or not!
+			int err = 0;
+			err = free_ppages(pte->ppn);
+			if (err)//If free_ppages finds a page being swapped out, it should return an error code, and remove_pageonisk should be called.
+			{
+				lock_release(as->pt->paget_lock);
+				while(pte->state) { ; /*Do nothing but wait for the swap out to complete.*/ }
+				remove_pageondisk(pte->vpn);//This function will try acquiring the st_lock, making it wait until swapout is done.
+				lock_acquire(as->pt->paget_lock);
+			}
 			kfree(pte);
 			array_remove(as->pt->pt_array, 0);
 		}
@@ -819,6 +839,7 @@ as_destroy(struct addrspace *as)
 			array_remove(as->pt->pt_array, 0);
 		}
 	}
+	lock_release(as->pt->paget_lock);
 	array_destroy(as->pt->pt_array);
 	lock_destroy(as->pt->paget_lock);
 	kfree(as->pt);
@@ -1087,6 +1108,8 @@ pick_page(unsigned int *pid)
 	//unsigned limit = 10000000;
 	//unsigned ctr = 0;
 	//spinlock_acquire(&cm_splk);
+
+	//May not want to try picking a page from a proc that's getting destroyed, since freepageondisk
 	while(1)//If every single page is fixed, infinite loop. Don't think that's possible.
 	{
 		clock++;
@@ -1107,6 +1130,7 @@ pick_page(unsigned int *pid)
 			cm_entry[clock].page_status = FIXED_STATE;
 			//spinlock_release(&cm_splk);
 			if (cm_entry[clock].pid == 1) { panic("Attempting to swap out kernel page!!"); }
+			cm_entry[clock].pid = 0; //This indicates that the page is being swapped out.
 			return (clock * PAGE_SIZE);
 		}
 		//ctr++;
@@ -1140,8 +1164,8 @@ paddr_t swapout(int npages)
        paddr_t ppn = pick_page(&s_pid);
 
 	//get_proc requires getting a proc_table lock breifly.
-	//  But, we are holding a spinlock now, right?
 	KASSERT(spinlock_do_i_hold(&cm_splk));
+	spinlock_release(&cm_splk);//Safe to release here, since our pp wont get swapped out or freed now.
        struct proc* s_proc = get_proc(s_pid);
 	//lock_acquire(s_proc->p_addrspace->pt->paget_lock);
 	KASSERT(s_proc != NULL);
@@ -1153,9 +1177,13 @@ paddr_t swapout(int npages)
        */
        struct page_table_entry *pte = NULL;
 	//lock_acquire(pt->paget_lock);
+	lock_acquire(swap_table_lk);
        int err = pt_plookup(pt, ppn, &pte);
-	KASSERT(pte->state == 0);
-       as_activate();
+	KASSERT(pte->state == 0);//Have the swap table lock acquired before this.
+				//We can make as_destroy wait until the state is changed to try acquiring the swap_table lock.
+				//DEADLOCK ISSUE: Make sure that, if you do this, NOTHING tries acquiring the st_lock while holding a pt_lock!!
+       //tlbshootdown code should go here.
+	as_activate();
 
        KASSERT(err == 0);
 
@@ -1170,8 +1198,9 @@ paddr_t swapout(int npages)
        //lock_acquire(swap_table_lk);
        unsigned disc_idx = 0;
        bitmap_alloc(st_bit_map, &disc_idx);
-       //call block write 
-	spinlock_release(&cm_splk);
+
+       //call block write.
+	//spinlock_release(&cm_splk);
        err = block_write(ppn, disc_idx);//APPARENTLY a swapin can occur during this.
        //err = block_write(pte->vpn, disc_idx);
        if(err)
@@ -1183,11 +1212,12 @@ paddr_t swapout(int npages)
        }
        pte->ppn = 0;
 
-	spinlock_acquire(&cm_splk);
+	//spinlock_acquire(&cm_splk);
        st[st_idx].pid = s_pid;
        st[st_idx].vpn = pte->vpn;
        st[st_idx].disc_idx = disc_idx;
        st[st_idx].pte = pte;
+	lock_release(swap_table_lk);
 
        //unsigned dummy = 0;
 
@@ -1203,6 +1233,8 @@ paddr_t swapout(int npages)
 	//getppages can tell if it's a user page or kernel page, so do it there.
        //cm_entry[ppn/PAGE_SIZE].page_status = DIRTY_STATE;
 
+	//Get the coremap spinlock back before returning to getppages.
+	spinlock_acquire(&cm_splk);
        (void)npages;
        return ppn;
 	
@@ -1231,10 +1263,13 @@ paddr_t swapout(int npages)
 	//Done? Idunno, permissions might also need to be considered.
 }
 
-//To be used by as_destroy.
+//To be used by as_destroy only.
 int remove_pageondisk(vaddr_t vpn)
 {
+	lock_acquire(swap_table_lk);
+
 	//locate the swap_table_entry using pid and vpn
+	//WARNING! What if as_destroy is called with a non-curent proc?! (might never happen)
 	unsigned pid = curproc->pid;
 
 	//lock_acquire(swap_table_lk);
@@ -1265,7 +1300,8 @@ int remove_pageondisk(vaddr_t vpn)
 		}
 	}
 
-	//lock_release(swap_table_lk);
+	lock_release(swap_table_lk);
+
 	if(!temp)
 	{
 		panic("::: We dont have a swap_table_entry for this vpn ::: ");
@@ -1288,7 +1324,7 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 	//  Just make certain that swapin and swapout acquire in same order.)
 
 	//Use the swap table to find the data we need.
-	//lock_acquire(swap_table_lk);
+	lock_acquire(swap_table_lk);
 	int i = 0, n = 512;
 
 	//struct swap_table ste = NULL;
@@ -1315,22 +1351,23 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 			st[i].disc_idx = 0;
 			st[i].pte = NULL;
 			//array_remove(st->entries, i);
-			//lock_release(swap_table_lk);
+			lock_release(swap_table_lk);
 
 			//Update the pte for the proc that owns this page.
 			struct proc *p = NULL;
 			p = get_proc(pid);
 			KASSERT(p != NULL);
-			spinlock_acquire(&cm_splk);//SYNCH ISSUE: Will need to acquire paget_lock before this.
+			//spinlock_acquire(&cm_splk);//SYNCH ISSUE: Will need to acquire paget_lock before this.
 			err = pt_lookup(p->p_addrspace->pt, vpn, 0, paddr, &pte);
 			if(err == 0 || err == -1)
 			{
 				panic("Page table out of synch while swapping in!");
 			}
 			KASSERT(pte != NULL);
-			//lock_acquire(p->p_addrspace->pt->paget_lock);
+			lock_acquire(p->p_addrspace->pt->paget_lock);
 			pte->ppn = *paddr;
 			pte->state = 1; //Mark it as being in memory.
+			lock_release(p->p_addrspace->pt->paget_lock);
 
 			//kprintf("Swapped page into %x.\n", pte->ppn);
 
@@ -1353,7 +1390,7 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 
 			//Mark the coremap page as owned by this proc and DIRTY_STATE..
 			//  TODO: Mark page as CLEAN once you change swapout to support that.
-			//spinlock_acquire(&cm_splk);
+			spinlock_acquire(&cm_splk);
 			cm_entry[*paddr/PAGE_SIZE].page_status = DIRTY_STATE;
 			KASSERT(cm_entry[*paddr/PAGE_SIZE].pid != 1);
 			cm_entry[*paddr/PAGE_SIZE].ref = 1;
@@ -1364,7 +1401,7 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 	}
 	if (i == n)
 	{
-		//lock_release(swap_table_lk);
+		lock_release(swap_table_lk);
 		panic("Swapin couldn't find its page!");
 		return -1;
 	}

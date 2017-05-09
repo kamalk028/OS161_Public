@@ -83,6 +83,8 @@ struct proc *get_proc(int pid)
 	if (pid >= MAX_PROC || pid < 0){
 		return NULL;
 	}
+	//MAY NEED TO REMOVE THIS LOCK GRAB.
+	//I don't think it'll hurt, since pid's cannot change 'till a proc is destroyed.
 	lock_acquire(pt_lock);
 	p =  pt[pid].proc;
 	lock_release(pt_lock);
@@ -338,12 +340,25 @@ proc_destroy(struct proc *proc)
 
 	//kfree(proc->vn);
 	kfree(proc->p_name);
+
+	//Remove the process from the proc_table.
+	lock_acquire(pt_lock);
+	pt[proc->pid].proc = NULL;
+
 	//kfree(proc->child_exit_status);
 	//kfree(proc->exit_code);
+
+	//If we're destroying the first process, make sure it's also the last!
 	if(proc->ppid == 0)
 	{
+		for (int pt_idx = 0; pt_idx < MAX_PROC; pt_idx++)
+		{
+			KASSERT(pt[pt_idx].proc == NULL);
+		}
+		lock_release(pt_lock);
 		lock_destroy(pt_lock);
 	}
+	else { lock_release(pt_lock); }
 	kfree(proc);
 }
 
@@ -437,6 +452,7 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 
 	/* VM fields */
 	newproc->p_addrspace = NULL;
+
 	/* Update the process table and assign PID. Also copy address space.*/
 	lock_acquire(pt_lock);
 	pt[next_pid].proc = newproc;//Firat PID for this function should be 3. 
