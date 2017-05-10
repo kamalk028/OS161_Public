@@ -104,7 +104,7 @@ dumbvm_can_sleep(void)
 
 static
 paddr_t
-_getppages(unsigned long npages, bool is_kern)
+_getppages(unsigned long npages, bool is_kern, unsigned long pid)
 {
 	//NOTE: Think about read-write locks for faster implementations...
 	//  Think about using splhigh() and setting volatile values...
@@ -163,7 +163,7 @@ _getppages(unsigned long npages, bool is_kern)
 				spinlock_acquire(&cm_splk);
 			}*/
 			KASSERT(cm_entry[addr/PAGE_SIZE].pid != 1);
-			cm_entry[addr/PAGE_SIZE].pid = curproc->pid;//Maybe this isn't such a good idea?
+			cm_entry[addr/PAGE_SIZE].pid = pid;
 			//kprintf("pid value in coremap: %u\n", curproc->pid);
 			unsigned pg_status = FIXED_STATE;
 			if(!is_kern)
@@ -202,7 +202,7 @@ _getppages(unsigned long npages, bool is_kern)
 			cm_entry[i].ref = 0;
 			if(CURCPU_EXISTS())
 			{
-				cm_entry[i].pid = curproc->pid;//Maybe this is causing issues?
+				cm_entry[i].pid = pid;
 			}
 			else
 			{
@@ -227,9 +227,9 @@ _getppages(unsigned long npages, bool is_kern)
 
 static
 paddr_t
-getppages(unsigned long npages)
+getppages(unsigned long npages, unsigned int pid)
 {
-	return _getppages(npages, true);
+	return _getppages(npages, true, pid);
 }
 
 //Same as getppages, but gives dirty state to pages.
@@ -397,9 +397,12 @@ alloc_kpages(unsigned npages)
 {
 	//Taarget addresses can be calculated with cm_index * PAGE_SIZE.
 	paddr_t pa;
+	unsigned pid;
+	if (CURCPU_EXISTS()) { pid = curproc->pid; }
+	else { pid = 1; }
 
 	dumbvm_can_sleep();
-	pa = getppages(npages); //This should return a physical address, and no longer just "steal" memory.
+	pa = getppages(npages, pid); //This should return a physical address, and no longer just "steal" memory.
 	if (pa==0) {
 		return 0;
 	}
@@ -580,7 +583,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	}
 	else if (err)//If no pte was found, allocate some physical memory.
 	{
-		paddr = getppages(1);//Changed to getppages so it doesn't get swapped out before its pte is created...
+		paddr = getppages(1, curproc->pid);//Changed to getppages so it doesn't get swapped out before its pte is created...
 		//ppn = copy_fa - MIPS_KSEG0;
 		ppn = paddr & PAGE_FRAME;
 		struct page_table_entry *pte = pte_create(vpn, ppn, as_region->permission, 1, 1, 0);
@@ -739,7 +742,7 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 	for (i = 0; i < num_pte; i++)
 	{
 		//DEADLOCK ISSUE! Do not try holding the paget_lock while calling getppages.
-		newppn = getppages(1);//Doing this actually assigns the wrong pid, temporarily. Doesn't matter since page won't get swapped out with FIXED_STATE.
+		newppn = getppages(1, newpid);//These pages cannot be swapped out yet since they get marked as fixed.
 		if(newppn == 0)
 		{
 			as_destroy(newas);//kfree(newas);
@@ -750,12 +753,12 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		//Rmv locks from getupages.
 		spinlock_acquire(&cm_splk);
 		KASSERT(cm_entry[newppn/PAGE_SIZE].pid != 1);
-		cm_entry[newppn/PAGE_SIZE].pid = newpid;
+		//cm_entry[newppn/PAGE_SIZE].pid = newpid;
 		spinlock_release(&cm_splk);
 
 		lock_acquire(old->pt->paget_lock);
 		pte = array_get(old->pt->pt_array, i);
-		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);
+		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);//XXX:ISSUE HERE!! Parent's page could be on disk, while child's is in mem!
 		if(newpte == NULL)
 		{
 			lock_release(old->pt->paget_lock);
@@ -822,7 +825,7 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 	(void)num_pte;
 	(void)newppn;*/
 	(void)newr;
-	 *ret = newas;
+	 *ret = newas;//XXX: ISSUE, the child does not own the as until this point. So if one of its pages gets swapped out, the owner is reported as a NULL addrspace.
 	return 0;
 }
 
@@ -830,6 +833,9 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 void
 as_destroy(struct addrspace *as)
 {
+	//Remove this if it gets thrown. This should not be mandatory.
+	KASSERT(as == curproc->p_addrspace);
+	kprintf("as_destroy called on addrspace of pid %u.\n", curproc->pid);
 	//This function originally did almost nothing, and probably leaked a lot of each process' memory.
 	dumbvm_can_sleep();
 	struct as_region *r;
@@ -1191,25 +1197,36 @@ paddr_t swapout(int npages)
 	}*/
 
 	unsigned s_pid;
+	struct proc *s_proc = NULL;
+	paddr_t ppn = 0;
 	    /*
         * pick_page holds cm_splk throughout the operation.
         * page_status of the picked_page is set as FIXED_STATE
         * Remember to change the state back to dirty when you make all the necessary changes
         */
 
-       paddr_t ppn = pick_page(&s_pid);
-	if (ppn == 0)
+	while((s_proc == NULL) || (s_proc->p_addrspace == NULL))
 	{
-		return 0;
-	}
+		if (!spinlock_do_i_hold(&cm_splk)) { spinlock_acquire(&cm_splk); }
+       		ppn = pick_page(&s_pid);
+		if (ppn == 0)
+		{
+			return 0;
+		}
 
-	//get_proc requires getting a proc_table lock breifly.
-	KASSERT(spinlock_do_i_hold(&cm_splk));
-	spinlock_release(&cm_splk);//Safe to release here, since our pp wont get swapped out or freed now.
-       struct proc* s_proc = get_proc(s_pid);
-	//lock_acquire(s_proc->p_addrspace->pt->paget_lock);
-	KASSERT(s_proc != NULL);
-	if (s_proc->p_addrspace == NULL) { panic("Address space of pid %u is NULL during swapout!", s_pid); }
+		//get_proc requires getting a proc_table lock breifly. We could actually be holding that lock now, from proc_fork_runprogram.
+		//If we are holding the pt_lock, it's safe to let it go by now. We only needed it so getppages would get the right pid.
+		KASSERT(spinlock_do_i_hold(&cm_splk));
+		spinlock_release(&cm_splk);//Safe to release here, since our pp wont get swapped out or freed now.
+       		s_proc = get_proc(s_pid);
+		//lock_acquire(s_proc->p_addrspace->pt->paget_lock);
+		KASSERT(s_proc != NULL);
+		//If the proc's address space is NULL, we'll now just pick another page. If that happens...
+		//Either an entire as_destroy completes on the proces which owns the page we chose, we forgot a coremap spinlock somewhere, or a page is chosen for an uninitialized proc.
+		kprintf("Pid %u is gonna swap out page at %x, owned by %u.\n", curproc->pid, ppn, s_pid);
+		if (s_proc->p_addrspace == NULL) { panic("Address space of pid %u is NULL during swapout!", s_pid); }
+		//I thought wrong pid values were getting in the coremap, but apparently not.
+	}
 	KASSERT(s_proc->p_addrspace->pt != NULL);
        struct page_table *pt = s_proc->p_addrspace->pt;
 
@@ -1306,6 +1323,7 @@ paddr_t swapout(int npages)
 //To be used by as_destroy only.
 int remove_pageondisk(vaddr_t vpn)
 {
+	//At this point, the page is either not on the coremap, or it's still there but is gonna get swapped out.
 	lock_acquire(swap_table_lk);
 
 	//locate the swap_table_entry using pid and vpn
@@ -1320,6 +1338,7 @@ int remove_pageondisk(vaddr_t vpn)
 
 	bool temp = false;
 
+	kprintf("Deleting page on disk: pid %u, vaddr %x.\n", pid, vpn);
 	for (i=0; i<n; i++)
 	{
 		//ste = st[i];
@@ -1357,7 +1376,7 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 	int err = 0;
 	//First, we might need to call swapout(). swapout may get called by getppages.
 
-	*paddr = getppages(1);//Page temporarily labelled as FIXED.
+	*paddr = getppages(1, pid);//Page temporarily labelled as FIXED.
 	if (*paddr == 0)
 	{
 		panic("We're SOL, pid %u needs a swapin and the whole coremap is fixed!\n", pid);
@@ -1418,7 +1437,7 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 			pte->state = 1; //Mark it as being in memory.
 			lock_release(p->p_addrspace->pt->paget_lock);
 
-			//kprintf("Swapped page into %x.\n", pte->ppn);
+			kprintf("Swapped page into %x, owned by %u. Done by %u.\n", pte->ppn, pid, curproc->pid);
 
 			//STUPID DEBUG: Make sure modifying pte returned by ptlookup also modifies the original.
 			/*unsigned int n = array_num(p->p_addrspace->pt->pt_array);

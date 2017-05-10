@@ -482,6 +482,7 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 		}
 	}
 	//spinlock_acquire(&curproc->p_lock);
+	kprintf("Pid %u is doing as_copy for %u\n", curproc->pid, newproc->pid);
 	int t_err = as_copy(curproc->p_addrspace, &newproc->p_addrspace, newproc->pid);
 	//Done here while holding pt_lock so that next_pid is correct.
 	if(t_err)
@@ -490,6 +491,7 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 		pt[newproc->pid].proc = NULL;
 		*err = -1;
 		*err_code = t_err;
+		kprintf("Creation of %u's addrspace failed!\n", newproc->pid);
 		return NULL;
 	}
 	//spinlock_release(&curproc->p_lock);
@@ -502,6 +504,7 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 		pt[newproc->pid].proc = NULL;
 		*err_code = ENOMEM;
 		*err = -1;
+		kprintf("Creation of %u's addrspace failed!\n", newproc->pid);
 		return NULL;
 	}
 
@@ -533,6 +536,8 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 	{
 		lock_release(curproc->child_pids_lock);
 		pt[newproc->pid].proc = NULL;
+		as_destroy(newproc->p_addrspace);
+		kprintf("addrspace for pid %u had to be destroyed.\n", newproc->pid);
 		*err = -1;
 		*err_code = t_err;
 		return NULL;
