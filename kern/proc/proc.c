@@ -486,14 +486,15 @@ proc_fork_runprogram(const char *name, int *err, int *err_code)//fork() currentl
 	//Done here while holding pt_lock so that next_pid is correct.
 	if(t_err)
 	{
-		lock_release(pt_lock);
+		if (lock_do_i_hold(pt_lock)) { lock_release(pt_lock); }
 		pt[newproc->pid].proc = NULL;
 		*err = -1;
 		*err_code = t_err;
 		return NULL;
 	}
 	//spinlock_release(&curproc->p_lock);
-	lock_release(pt_lock);//HOW DID A PROCESS GET HERE WITHOUT THE LOCK?!
+	//as_copy can sometimes end up calling swapout, which acquires and releases this lock.
+	if (lock_do_i_hold(pt_lock)) { lock_release(pt_lock); }
 
 
 	if(newproc->p_addrspace == NULL)
