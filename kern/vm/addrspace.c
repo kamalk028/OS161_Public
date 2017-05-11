@@ -729,7 +729,8 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		err = as_define_region(newas, r->start, (r->size * PAGE_SIZE), read, write, exec);
 		if (err)
 		{
-			as_destroy(newas);//kfree(newas);
+			kprintf("as_define_region failed, causing Pid %u to destroy an addrspace.\n", curproc->pid);
+			as_destroy(newas);//kfree(*ret);
 			(void)*ret;
 			return err;
 		}
@@ -745,7 +746,8 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 		newppn = getppages(1, newpid);//These pages cannot be swapped out yet since they get marked as fixed.
 		if(newppn == 0)
 		{
-			as_destroy(newas);//kfree(newas);
+			//kprintf("getppages failed during as_copy from pid %u.\n", curproc->pid);
+			as_destroy(newas);//kfree(*ret);
 			return ENOMEM;
 		}
 		//Now we re-adjust that pid value in the coremap. 
@@ -758,7 +760,8 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 
 		lock_acquire(old->pt->paget_lock);
 		pte = array_get(old->pt->pt_array, i);
-		newpte = pte_create(pte->vpn, newppn, pte->permission, pte->state, pte->valid, pte->ref);//XXX:ISSUE HERE!! Parent's page could be on disk, while child's is in mem!
+		//Originally, we accidentally made the child's pte->state equal the parent's, even though it should always be 1 here.
+		newpte = pte_create(pte->vpn, newppn, pte->permission, 1, pte->valid, 0);
 		if(newpte == NULL)
 		{
 			lock_release(old->pt->paget_lock);
@@ -767,7 +770,8 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 			{
 				panic("We tried swapping out a page that didn't have a pte ready yet!!");
 			}
-			as_destroy(newas);//kfree(newas);
+			kprintf("PTE creation failed during as_create from pid %u.\n", curproc->pid);
+			as_destroy(newas);//kfree(*ret);
 			return ENOMEM;
 		}
 		if(pte->state == 0)
@@ -825,7 +829,7 @@ as_copy(struct addrspace *old, struct addrspace **ret, unsigned int newpid)
 	(void)num_pte;
 	(void)newppn;*/
 	(void)newr;
-	 *ret = newas;//XXX: ISSUE, the child does not own the as until this point. So if one of its pages gets swapped out, the owner is reported as a NULL addrspace.
+	*ret = newas;
 	return 0;
 }
 
@@ -834,8 +838,8 @@ void
 as_destroy(struct addrspace *as)
 {
 	//Remove this if it gets thrown. This should not be mandatory.
-	KASSERT(as == curproc->p_addrspace);
-	kprintf("as_destroy called on addrspace of pid %u.\n", curproc->pid);
+	//KASSERT(as == curproc->p_addrspace);
+	//kprintf("as_destroy called on addrspace of pid %u.\n", curproc->pid);
 	//This function originally did almost nothing, and probably leaked a lot of each process' memory.
 	dumbvm_can_sleep();
 	struct as_region *r;
@@ -1223,9 +1227,9 @@ paddr_t swapout(int npages)
 		KASSERT(s_proc != NULL);
 		//If the proc's address space is NULL, we'll now just pick another page. If that happens...
 		//Either an entire as_destroy completes on the proces which owns the page we chose, we forgot a coremap spinlock somewhere, or a page is chosen for an uninitialized proc.
-		kprintf("Pid %u is gonna swap out page at %x, owned by %u.\n", curproc->pid, ppn, s_pid);
-		if (s_proc->p_addrspace == NULL) { panic("Address space of pid %u is NULL during swapout!", s_pid); }
-		//I thought wrong pid values were getting in the coremap, but apparently not.
+		//kprintf("Pid %u is gonna swap out page at %x, owned by %u.\n", curproc->pid, ppn, s_pid);
+		//if (s_proc->p_addrspace == NULL) { panic("Address space of pid %u is NULL during swapout!", s_pid); }
+		//I thought wrong pid values were getting in the coremap, but apparently not. It is an uninitialized addrspace from as_copy getting selected.
 	}
 	KASSERT(s_proc->p_addrspace->pt != NULL);
        struct page_table *pt = s_proc->p_addrspace->pt;
@@ -1338,7 +1342,7 @@ int remove_pageondisk(vaddr_t vpn)
 
 	bool temp = false;
 
-	kprintf("Deleting page on disk: pid %u, vaddr %x.\n", pid, vpn);
+	//kprintf("Deleting page on disk: pid %u, vaddr %x.\n", pid, vpn);
 	for (i=0; i<n; i++)
 	{
 		//ste = st[i];
@@ -1437,7 +1441,7 @@ int swapin(vaddr_t vpn, paddr_t *paddr, unsigned int pid)
 			pte->state = 1; //Mark it as being in memory.
 			lock_release(p->p_addrspace->pt->paget_lock);
 
-			kprintf("Swapped page into %x, owned by %u. Done by %u.\n", pte->ppn, pid, curproc->pid);
+			//kprintf("Swapped page into %x, owned by %u. Done by %u.\n", pte->ppn, pid, curproc->pid);
 
 			//STUPID DEBUG: Make sure modifying pte returned by ptlookup also modifies the original.
 			/*unsigned int n = array_num(p->p_addrspace->pt->pt_array);
